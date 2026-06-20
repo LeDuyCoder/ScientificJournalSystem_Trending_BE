@@ -1,13 +1,14 @@
 import { Router } from 'express';
-import healthRoutes from './health.routes.js';
+import articlesRoutes from './articles.routes.js';
 
 const router = Router();
 
 /**
  * Mount all feature routes.
  */
-router.use('/health', healthRoutes);
+router.use('/articles', articlesRoutes);
 
 export default router;
+
 
 

@@ -1,9 +1,11 @@
 import express from 'express';
 
+import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger/swagger.js';
 import indexRoutes from './routes/index.js';
 import { errorHandler } from './middlewares/error.middleware.js';
+
 
 /**
  * Main Express application instance.
@@ -12,9 +14,15 @@ import { errorHandler } from './middlewares/error.middleware.js';
  */
 const app = express();
 
-// Parse JSON request bodies
-app.use(express.json());
 
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false,
+}));
+
+app.use(express.json());
 
 // Basic health check & routes
 app.use('/', indexRoutes);
