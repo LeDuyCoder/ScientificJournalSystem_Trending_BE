@@ -27,6 +27,19 @@ const options = {
             },
           },
         },
+        DensityMetric: {
+          type: 'object',
+          properties: {
+            value: {
+              type: 'number',
+              example: 0.84,
+            },
+            status: {
+              type: 'string',
+              example: 'stable',
+            },
+          },
+        },
       },
     },
   },

@@ -34,13 +34,13 @@ const router = express.Router();
  *                 data:
  *                   type: object
  *                   properties:
- *                     totalArticles:
+ *                     totalAuthors:
  *                       $ref: '#/components/schemas/StatMetric'
  *                     totalJournals:
  *                       $ref: '#/components/schemas/StatMetric'
- *                     totalAuthors:
- *                       $ref: '#/components/schemas/StatMetric'
- *                     totalCitations:
+ *                     densityIndex:
+ *                       $ref: '#/components/schemas/DensityMetric'
+ *                     totalRelocated:
  *                       $ref: '#/components/schemas/StatMetric'
  *       500:
  *         description: Lỗi máy chủ nội bộ
