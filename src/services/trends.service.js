@@ -4,14 +4,8 @@
  *
  * @type {Array<{ year: string; articles: number; citations: number }>}
  */
-const MOCK_TREND_DATA = [
-  { year: '2021', articles: 12000, citations: 85000 },
-  { year: '2022', articles: 15000, citations: 110000 },
-  { year: '2023', articles: 18500, citations: 142000 },
-  { year: '2024', articles: 22000, citations: 190000 },
-  { year: '2025', articles: 28000, citations: 250000 },
-  { year: '2026', articles: 32950, citations: 310000 },
-];
+import { neo4jDriver } from '../config/neo4j.js';
+import { redisGet, redisSet } from './redis.service.js';
 
 /**
  * Build the trend response payload from raw year-level records.
@@ -29,7 +23,6 @@ function buildTrendPayload(records) {
     return { timeline: [], series: [] };
   }
 
-  // Sort ascending by year
   const sorted = [...records].sort((a, b) => a.year.localeCompare(b.year));
 
   const timeline = sorted.map((r) => r.year);
@@ -49,7 +42,56 @@ function buildTrendPayload(records) {
 }
 
 export async function getPublicationTrends() {
-  // Phase 1: return mock data.
-  // In a future phase this function will query the database instead.
-  return buildTrendPayload(MOCK_TREND_DATA);
+  const cacheKey = 'analytics:publication_trends';
+
+  try {
+    const cachedData = await redisGet(cacheKey);
+    if (cachedData) {
+      return JSON.parse(cachedData);
+    }
+  } catch (err) {
+    console.warn('Failed to get trend data from Redis, falling back to Neo4j:', err?.message || err);
+  }
+
+  const driver = neo4jDriver;
+
+  if (!driver) {
+    throw new Error(
+      'Neo4j driver is not configured. Please set NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD.'
+    );
+  }
+
+  const cypher = `
+    MATCH (a:Article)
+    WHERE a.publication_year IS NOT NULL AND toString(a.publication_year) <> ''
+    WITH toString(a.publication_year) AS year, a
+    OPTIONAL MATCH (b:Article)-[r:REFERENCES]->(a)
+    WITH year, count(DISTINCT a) AS articles, count(r) AS citations
+    RETURN year, toInteger(articles) AS articles, toInteger(citations) AS citations
+    ORDER BY year ASC
+  `;
+
+  const session = driver.session({ defaultAccessMode: 'READ' });
+
+  try {
+    const result = await session.run(cypher);
+
+    const records = result.records.map((row) => ({
+      year: row.get('year'),
+      articles: row.get('articles').toNumber(),
+      citations: row.get('citations').toNumber(),
+    }));
+
+    const finalData = buildTrendPayload(records);
+
+    try {
+      await redisSet(cacheKey, JSON.stringify(finalData), 180);
+    } catch (err) {
+      console.warn('Failed to set trend data in Redis:', err?.message || err);
+    }
+
+    return finalData;
+  } finally {
+    await session.close();
+  }
 }
