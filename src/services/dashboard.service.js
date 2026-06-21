@@ -285,21 +285,14 @@ export async function getDashboardStats() {
         currentYear, previousYear,
     };
 
-    // ── 4. Thực thi đồng thời cả 4 truy vấn (sử dụng một READ session duy nhất) ───────────────
+    // ── 4. Thực thi tuần tự các truy vấn trên một session duy nhất ───────────────
     const session = driver.session({ defaultAccessMode: 'READ' });
 
     try {
-        const [
-            articlesResult,
-            journalsResult,
-            authorsResult,
-            citationsResult,
-        ] = await Promise.all([
-            session.run(ARTICLES_STATS_QUERY, params),
-            session.run(JOURNALS_STATS_QUERY, params),
-            session.run(AUTHORS_STATS_QUERY, params),
-            session.run(CITATIONS_STATS_QUERY, params),
-        ]);
+        const articlesResult = await session.run(ARTICLES_STATS_QUERY, params);
+        const journalsResult = await session.run(JOURNALS_STATS_QUERY, params);
+        const authorsResult = await session.run(AUTHORS_STATS_QUERY, params);
+        const citationsResult = await session.run(CITATIONS_STATS_QUERY, params);
 
         // ── 5. Phân tích cú pháp của từng kết quả trả về ─────────────────────────────────────────────────
         /**
