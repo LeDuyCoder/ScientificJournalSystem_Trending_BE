@@ -42,7 +42,7 @@ function buildTrendPayload(records) {
 }
 
 export async function getPublicationTrends() {
-  const cacheKey = 'analytics:publication_trends';
+  const cacheKey = 'analytics:trends:publication_citation';
 
   try {
     const cachedData = await redisGet(cacheKey);
