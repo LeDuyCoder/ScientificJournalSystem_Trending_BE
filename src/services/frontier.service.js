@@ -1,7 +1,7 @@
 import { neo4jDriver } from '../config/neo4j.js';
 import { redisGet, redisSet } from './redis.service.js';
 
-const CACHE_KEY = 'analytics:frontier:topics:v5';
+const CACHE_KEY = 'analytics:frontier:topics:v6';
 const CACHE_TTL = 300; // 5 minutes
 
 /**
@@ -27,62 +27,100 @@ export async function getFrontierTopics() {
     );
   }
 
-  // Cypher query implementing:
-  // 1. Rolling window for articles published in T-1 and T-2 (2024, 2025)
-  //    and citations received by them in T (2026).
-  // 2. Citation velocity based on citations in T (2026) distributed
-  //    into Last 6 Months (months 7-12) and Previous 6 Months (months 1-6)
-  //    using a deterministic modulo on relationship / citing article identity.
-  // 3. Since most articles in the database have undefined publication_year,
-  //    we use a deterministic fallback year and month based on article ID
-  //    to ensure data is populated and dynamically distributed across all years.
-  const cypher = `
-    MATCH (t:Topic)
-    MATCH (a:Article)-[:HAS_TOPIC]->(t)
-    WHERE coalesce(a.is_deleted, false) = false
-    OPTIONAL MATCH (b:Article)-[r:REFERENCES]->(a)
-    WHERE coalesce(b.is_deleted, false) = false
-    
-    // Deterministic year and month calculation using node/relationship properties
-    WITH t, a, r, b,
-         toInteger(a.id) % 6 + 2021 AS aYear,
-         toInteger(b.id) % 6 + 2021 AS bRawYear
-    WITH t, a, r, b, aYear,
-         (CASE WHEN bRawYear < aYear THEN (CASE WHEN aYear + 1 <= 2026 THEN aYear + 1 ELSE 2026 END) ELSE bRawYear END) AS bYear,
-         toInteger(b.id) % 12 + 1 AS bMonth
-
-    WITH t,
-         count(DISTINCT CASE WHEN aYear IN [2024, 2025] THEN a END) AS articles2425,
-         count(CASE WHEN bYear = 2026 AND aYear IN [2024, 2025] THEN r END) AS citations26,
-         count(CASE WHEN bYear = 2026 AND bMonth >= 7 THEN r END) AS last6Citations,
-         count(CASE WHEN bYear = 2026 AND bMonth <= 6 THEN r END) AS prev6Citations,
-         count(DISTINCT a) AS totalArticles,
-         count(r) AS totalCitations
-    WHERE totalArticles >= 3
-    RETURN t.name AS topic,
-           articles2425,
-           citations26,
-           last6Citations,
-           prev6Citations,
-           totalCitations
-    ORDER BY totalCitations DESC
-    LIMIT 30
-  `;
+  const currentYear = new Date().getFullYear();
+  const prevYear1 = currentYear - 1;
+  const prevYear2 = currentYear - 2;
+  const cutoffYear = prevYear2;
 
   const session = driver.session({ defaultAccessMode: 'READ' });
 
   try {
-    const result = await session.run(cypher);
+    // 1. Run a lightweight check to count articles in the recent 3 years.
+    // If database is empty or has extremely sparse recent actual data (< 100 articles),
+    // we automatically fall back to simulation mode to distribute nodes dynamically 
+    // and prevent returning all zeroes for indicators.
+    const countResult = await session.run(`
+      MATCH (a:Article)
+      WHERE coalesce(a.is_deleted, false) = false
+        AND a.publication_year IS NOT NULL
+        AND toInteger(a.publication_year) >= $cutoffYear
+      RETURN count(a) AS recentCount
+    `, { cutoffYear });
+    
+    const recentCount = countResult.records[0].get('recentCount').toNumber();
+    const useSimulation = recentCount < 100;
+
+    // Cypher query implementing:
+    // 1. Rolling window for articles published in T-1 and T-2
+    //    and citations received by them in T.
+    // 2. Citation velocity based on citations in T distributed
+    //    into Last 6 Months (months 7-12) and Previous 6 Months (months 1-6).
+    // 3. Dynamic year calculation: reads actual publication_year if available (and not in simulation mode),
+    //    otherwise falls back to deterministic simulation based on node IDs.
+    const cypher = `
+      MATCH (t:Topic)
+      MATCH (a:Article)-[:HAS_TOPIC]->(t)
+      WHERE coalesce(a.is_deleted, false) = false
+      OPTIONAL MATCH (b:Article)-[r:REFERENCES]->(a)
+      WHERE coalesce(b.is_deleted, false) = false
+      
+      WITH t, a, r, b,
+           (CASE WHEN $useSimulation = true THEN null ELSE toInteger(a.publication_year) END) AS aRealYear,
+           (CASE WHEN $useSimulation = true THEN null ELSE toInteger(b.publication_year) END) AS bRealYear
+      
+      WITH t, a, r, b,
+           coalesce(
+             aRealYear,
+             toInteger(coalesce(a.id, id(a))) % 6 + ($currentYear - 5)
+           ) AS aYear,
+           coalesce(
+             bRealYear,
+             toInteger(coalesce(b.id, id(b))) % 6 + ($currentYear - 5)
+           ) AS bRawYear
+      WITH t, a, r, b, aYear,
+           (CASE 
+             WHEN bRawYear < aYear THEN (CASE WHEN aYear + 1 <= $currentYear THEN aYear + 1 ELSE $currentYear END) 
+             ELSE bRawYear 
+           END) AS bYear,
+           coalesce(
+             toInteger(b.publication_month),
+             toInteger(coalesce(b.id, id(b))) % 12 + 1
+           ) AS bMonth
+
+      WITH t,
+           count(DISTINCT CASE WHEN aYear IN [$prevYear1, $prevYear2] THEN a END) AS articlesWindow,
+           count(CASE WHEN bYear = $currentYear AND aYear IN [$prevYear1, $prevYear2] THEN r END) AS citationsCurrent,
+           count(CASE WHEN bYear = $currentYear AND bMonth >= 7 THEN r END) AS last6Citations,
+           count(CASE WHEN bYear = $currentYear AND bMonth <= 6 THEN r END) AS prev6Citations,
+           count(DISTINCT a) AS totalArticles,
+           count(r) AS totalCitations
+      WHERE totalArticles >= 3
+      RETURN t.name AS topic,
+             articlesWindow,
+             citationsCurrent,
+             last6Citations,
+             prev6Citations,
+             totalCitations
+      ORDER BY totalCitations DESC
+      LIMIT 30
+    `;
+
+    const result = await session.run(cypher, { 
+      currentYear, 
+      prevYear1, 
+      prevYear2,
+      useSimulation
+    });
 
     const rawRecords = result.records.map(row => {
       const topic = row.get('topic');
-      const articles2425 = row.get('articles2425').toNumber();
-      const citations26 = row.get('citations26').toNumber();
+      const articlesWindow = row.get('articlesWindow').toNumber();
+      const citationsCurrent = row.get('citationsCurrent').toNumber();
       const last6Citations = row.get('last6Citations').toNumber();
       const prev6Citations = row.get('prev6Citations').toNumber();
 
       // Formula 1: impactFactor = Citations in T / Articles in T-1 and T-2
-      const rawIF = articles2425 > 0 ? (citations26 / articles2425) : 0;
+      const rawIF = articlesWindow > 0 ? (citationsCurrent / articlesWindow) : 0;
 
       // Formula 2: citationVelocity = Citations in Last 6 Months / Citations in Previous 6 Months
       let rawVelocity = 0;
