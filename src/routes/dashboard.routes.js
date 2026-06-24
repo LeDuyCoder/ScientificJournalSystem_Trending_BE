@@ -17,6 +17,22 @@ const router = express.Router();
  *       Dữ liệu phản hồi được lưu tạm thời (caching) trong Redis trong vòng 5 phút để tăng tốc độ phản hồi.
  *     tags:
  *       - Dashboard
+ *     parameters:
+ *       - in: query
+ *         name: subjectArea
+ *         schema:
+ *           type: string
+ *         description: 'Tên lĩnh vực chính của dự án để lọc dữ liệu (ví dụ: Computer Science).'
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: 'Danh sách tên hoặc ID Keyword ngăn cách bởi dấu phẩy để lọc dữ liệu (ví dụ: AI Agent,Machine Learning).'
+ *       - in: query
+ *         name: keywordIds
+ *         schema:
+ *           type: string
+ *         description: '(Tùy chọn khác) Danh sách ID hoặc tên Keyword ngăn cách bởi dấu phẩy để lọc dữ liệu.'
  *     responses:
  *       200:
  *         description: Lấy dữ liệu thống kê thành công

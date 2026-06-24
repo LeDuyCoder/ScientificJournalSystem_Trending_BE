@@ -88,157 +88,6 @@ function getPeriodBounds() {
 // ─────────────────────────────────────────────────────────────────────────────
 // CÁC TRUY VẤN CYPHER (CYPHER QUERIES)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Bài báo (Articles)
- *
- * Các trường lược đồ (schema) được sử dụng:
- *   - publication_year : kiểu integer NULL  ← trường created_at bị null trong Neo4j, sử dụng year thay thế
- *   - is_deleted       : kiểu boolean NULL [false] ← loại bỏ các bài viết đã bị xóa mềm (soft-deleted)
- *
- * growthRate so sánh số lượng bài báo theo publication_year: giữa currentYear và previousYear.
- */
-const ARTICLES_STATS_QUERY = `
-  MATCH (a:Article)
-  WHERE coalesce(a.is_deleted, false) = false
-  WITH
-    count(a) AS totalValue,
-
-    count(
-      CASE
-        WHEN a.publication_year IS NOT NULL
-          AND toInteger(a.publication_year) = $currentYear
-        THEN 1
-      END
-    ) AS currentCount,
-
-    count(
-      CASE
-        WHEN a.publication_year IS NOT NULL
-          AND toInteger(a.publication_year) = $previousYear
-        THEN 1
-      END
-    ) AS previousCount
-
-  RETURN totalValue, currentCount, previousCount
-`;
-
-/**
- * Tạp chí (Journals)
- *
- * Các trường lược đồ (schema) được sử dụng:
- *   - openalex_synced_at : kiểu timestamp NULL  ← mốc thời gian tốt nhất đại diện cho "created/updated"
- *   - is_deleted         : kiểu boolean [false] ← loại bỏ các tạp chí đã bị xóa mềm (soft-deleted)
- *
- * Không có trường created_at trên Journal → sử dụng openalex_synced_at làm mốc thay thế cho "dữ liệu thêm mới trong kỳ".
- */
-const JOURNALS_STATS_QUERY = `
-  MATCH (j:Journal)
-  WHERE coalesce(j.is_deleted, false) = false
-  WITH
-    count(j) AS totalValue,
-
-    count(
-      CASE
-        WHEN j.openalex_synced_at IS NOT NULL
-          AND datetime(j.openalex_synced_at) >= datetime($currentStart)
-          AND datetime(j.openalex_synced_at) <  datetime($currentEnd)
-        THEN 1
-      END
-    ) AS currentCount,
-
-    count(
-      CASE
-        WHEN j.openalex_synced_at IS NOT NULL
-          AND datetime(j.openalex_synced_at) >= datetime($previousStart)
-          AND datetime(j.openalex_synced_at) <  datetime($previousEnd)
-        THEN 1
-      END
-    ) AS previousCount
-
-  RETURN totalValue, currentCount, previousCount
-`;
-
-/**
- * Tác giả (Authors)
- *
- * Các trường lược đồ (schema) được sử dụng:
- *   - openalex_synced_at : kiểu timestamp NULL  ← mốc thời gian tốt nhất đại diện cho "created/updated"
- *   - is_deleted         : kiểu boolean [false] ← loại bỏ các tác giả đã bị xóa mềm (soft-deleted)
- *
- * Cấu trúc tương tự như Journal (không có trường created_at).
- */
-const AUTHORS_STATS_QUERY = `
-  MATCH (au:Author)
-  WHERE coalesce(au.is_deleted, false) = false
-  WITH
-    count(au) AS totalValue,
-
-    count(
-      CASE
-        WHEN au.openalex_synced_at IS NOT NULL
-          AND datetime(au.openalex_synced_at) >= datetime($currentStart)
-          AND datetime(au.openalex_synced_at) <  datetime($currentEnd)
-        THEN 1
-      END
-    ) AS currentCount,
-
-    count(
-      CASE
-        WHEN au.openalex_synced_at IS NOT NULL
-          AND datetime(au.openalex_synced_at) >= datetime($previousStart)
-          AND datetime(au.openalex_synced_at) <  datetime($previousEnd)
-        THEN 1
-      END
-    ) AS previousCount
-
-  RETURN totalValue, currentCount, previousCount
-`;
-
-/**
- * Trích dẫn (Citations - mối quan hệ :REFERENCES giữa các nút Article)
- *
- * Mối quan hệ REFERENCES mô phỏng lại cách sử dụng trong graph.service.js:
- *   (a:Article)-[r:REFERENCES]->(b:Article)
- *
- * growthRate: so sánh các lượt trích dẫn có nút nguồn (SOURCE article) có
- * publication_year khớp với năm/tháng hiện tại (current) so với trước đây (previous).
- *
- * Các trường lược đồ (schema) được sử dụng:
- *   - publication_year : kiểu integer NULL  (thuộc nút Article, được dùng làm mốc thay thế chu kỳ)
- *   - is_deleted       : kiểu boolean [false] trên cả hai nút đầu mút
- *
- * Lưu ý: Bản thân các mối quan hệ REFERENCES không mang thông tin mốc thời gian trong lược đồ,
- * do đó chúng tôi gom nhóm theo publication_year của bài báo nguồn (source article).
- * Đối với mức độ chi tiết theo tháng, chúng tôi sử dụng so sánh năm (currentYear so với previousYear).
- */
-const CITATIONS_STATS_QUERY = `
-  MATCH (a:Article)-[r:REFERENCES]->(b:Article)
-  WHERE coalesce(a.is_deleted, false) = false
-    AND coalesce(b.is_deleted, false) = false
-  WITH
-    count(r) AS totalValue,
-
-    count(
-      CASE
-        WHEN a.publication_year IS NOT NULL
-          AND toInteger(a.publication_year) = $currentYear
-        THEN 1
-      END
-    ) AS currentCount,
-
-    count(
-      CASE
-        WHEN a.publication_year IS NOT NULL
-          AND toInteger(a.publication_year) = $previousYear
-        THEN 1
-      END
-    ) AS previousCount
-
-  RETURN totalValue, currentCount, previousCount
-`;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // HÀM DỊCH VỤ CHÍNH (MAIN SERVICE FUNCTION)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -250,18 +99,84 @@ const CITATIONS_STATS_QUERY = `
  *
  * Kết quả được lưu tạm trong Redis trong vòng CACHE_TTL giây (mặc định: 5 phút).
  *
+/**
+ * Chuẩn bị và phân loại các bộ lọc thành ID và Tên chữ thường (case-insensitive)
+ */
+function prepareFilters(filters) {
+    const subjectArea = filters.subjectArea || '';
+    const keywords = filters.keywords || filters.keywordIds || [];
+
+    const processFilterArray = (arr) => {
+        const ids = [];
+        const namesLower = [];
+        for (const val of arr) {
+            if (val === undefined || val === null || val === '') continue;
+            if (typeof val === 'number') {
+                ids.push(val);
+            } else {
+                const str = String(val).trim();
+                const num = Number(str);
+                if (!Number.isNaN(num) && String(num) === str) {
+                    ids.push(num);
+                } else {
+                    namesLower.push(str.toLowerCase());
+                }
+                // Cũng đưa chuỗi gốc vào ids để hỗ trợ so khớp trực tiếp id kiểu chuỗi
+                ids.push(str);
+            }
+        }
+        return { ids, namesLower };
+    };
+
+    const kw = processFilterArray(keywords);
+
+    return {
+        subjectArea: typeof subjectArea === 'string' ? subjectArea.trim() : '',
+        keywordIds: kw.ids,
+        keywordNamesLower: kw.namesLower,
+    };
+}
+
+/**
+ * Lấy số liệu thống kê dashboard từ Neo4j.
+ *
+ * Trả về tổng số tích lũy + tỷ lệ tăng trưởng (growthRate) theo tháng cho:
+ *   Articles, Journals, Authors, Citations (mối quan hệ REFERENCES).
+ *
+ * Kết quả được lưu tạm trong Redis trong vòng CACHE_TTL giây (mặc định: 5 phút).
+ *
+ * @param {Object} [filters] - Bộ lọc tùy chọn để lọc dữ liệu theo Project.
+ * @param {string} [filters.subjectArea] - Lĩnh vực theo dõi của dự án.
+ * @param {Array<string|number>} [filters.keywords] - Danh sách tên/ID Keyword.
  * @returns {Promise<DashboardStats>}
  */
-export async function getDashboardStats() {
-    // ── 1. Kiểm tra cache Redis (graceful fallback: Nếu Redis offline → bỏ qua, không gây crash ứng dụng) ──
+export async function getDashboardStats(filters = {}) {
+    const {
+        subjectArea,
+        keywordIds,
+        keywordNamesLower,
+    } = prepareFilters(filters);
+
+    // ── 1. Tạo cache key động dựa trên bộ lọc ──
+    const filterParts = [];
+    if (subjectArea) filterParts.push(`subjectArea:${subjectArea}`);
+    if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
+        const sortedKws = [...keywordIds, ...keywordNamesLower].sort().join(',');
+        filterParts.push(`keywords:${sortedKws}`);
+    }
+
+    const dynamicCacheKey = filterParts.length > 0
+        ? `${CACHE_KEY}:filters:${filterParts.join('|')}`
+        : CACHE_KEY;
+
+    // Kiểm tra cache Redis
     try {
-        const cached = await redisGet(CACHE_KEY);
+        const cached = await redisGet(dynamicCacheKey);
         if (cached) {
-            return JSON.parse(cached); // Cache HIT → trả về kết quả ngay lập tức, không truy vấn Neo4j
+            return JSON.parse(cached); // Cache HIT
         }
     } catch (redisErr) {
-        // Redis offline hoặc lỗi mạng → bỏ qua cache, tiếp tục truy vấn cơ sở dữ liệu Neo4j
-        console.warn('[Dashboard] Redis không khả dụng, bỏ qua việc đọc dữ liệu từ cache:', redisErr.message);
+        console.warn('[Dashboard] Redis không khả dụng, bỏ quan việc đọc dữ liệu từ cache:', redisErr.message);
     }
 
     // ── 2. Kiểm tra cấu hình Neo4j driver ───────────────────────────────────────────────────
@@ -279,13 +194,93 @@ export async function getDashboardStats() {
         previousStart, previousEnd,
     } = getPeriodBounds();
 
+    // ── 4. Xây dựng động các câu truy vấn Cypher và tham số lọc ──────────────────────────────
+    let articleFilter = '';
+    let journalFilter = '';
+    let authorFilter = '';
+    let citationFilter = '';
+
+    if (subjectArea) {
+        articleFilter += ` AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) } `;
+        authorFilter += ` AND EXISTS { MATCH (au)-[:WRITES]->(a:Article) WHERE coalesce(a.is_deleted, false) = false AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) } } `;
+        citationFilter += `
+            AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) }
+            AND EXISTS { MATCH (b)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) }
+        `;
+        journalFilter += `
+            AND EXISTS {
+                MATCH (a:Article)-[:PUBLISHED_IN]->(j)
+                WHERE coalesce(a.is_deleted, false) = false
+                  AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) }
+            }
+        `;
+    }
+
+    if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
+        const kCond = `(toInteger(k.id) IN $keywordIds OR k.id IN $keywordIds OR k.name IN $keywordIds OR toLower(k.name) IN $keywordNamesLower)`;
+        articleFilter += ` AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} } `;
+        authorFilter += ` AND EXISTS { MATCH (au)-[:WRITES]->(a:Article) WHERE coalesce(a.is_deleted, false) = false AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} } } `;
+        citationFilter += `
+            AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} }
+            AND EXISTS { MATCH (b)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} }
+        `;
+        journalFilter += `
+            AND EXISTS {
+                MATCH (a:Article)-[:PUBLISHED_IN]->(j)
+                WHERE coalesce(a.is_deleted, false) = false
+                  AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} }
+            }
+        `;
+    }
+
     const params = {
         currentStart, currentEnd,
         previousStart, previousEnd,
         currentYear, previousYear,
+        subjectArea,
+        keywordIds, keywordNamesLower,
     };
 
-    // ── 4. Thực thi tuần tự các truy vấn trên một session duy nhất ───────────────
+    const ARTICLES_STATS_QUERY = `
+      MATCH (a:Article)
+      WHERE coalesce(a.is_deleted, false) = false ${articleFilter}
+      WITH
+        count(a) AS totalValue,
+        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $currentYear THEN 1 END) AS currentCount,
+        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $previousYear THEN 1 END) AS previousCount
+      RETURN totalValue, currentCount, previousCount
+    `;
+
+    const JOURNALS_STATS_QUERY = `
+      MATCH (j:Journal)
+      WHERE coalesce(j.is_deleted, false) = false ${journalFilter}
+      WITH
+        count(j) AS totalValue,
+        count(CASE WHEN j.openalex_synced_at IS NOT NULL AND datetime(j.openalex_synced_at) >= datetime($currentStart) AND datetime(j.openalex_synced_at) <  datetime($currentEnd) THEN 1 END) AS currentCount,
+        count(CASE WHEN j.openalex_synced_at IS NOT NULL AND datetime(j.openalex_synced_at) >= datetime($previousStart) AND datetime(j.openalex_synced_at) <  datetime($previousEnd) THEN 1 END) AS previousCount
+      RETURN totalValue, currentCount, previousCount
+    `;
+
+    const AUTHORS_STATS_QUERY = `
+      MATCH (au:Author)
+      WHERE coalesce(au.is_deleted, false) = false ${authorFilter}
+      WITH
+        count(au) AS totalValue,
+        count(CASE WHEN au.openalex_synced_at IS NOT NULL AND datetime(au.openalex_synced_at) >= datetime($currentStart) AND datetime(au.openalex_synced_at) <  datetime($currentEnd) THEN 1 END) AS currentCount,
+        count(CASE WHEN au.openalex_synced_at IS NOT NULL AND datetime(au.openalex_synced_at) >= datetime($previousStart) AND datetime(au.openalex_synced_at) <  datetime($previousEnd) THEN 1 END) AS previousCount
+      RETURN totalValue, currentCount, previousCount
+    `;
+
+    const CITATIONS_STATS_QUERY = `
+      MATCH (a:Article)-[r:REFERENCES]->(b:Article)
+      WHERE coalesce(a.is_deleted, false) = false AND coalesce(b.is_deleted, false) = false ${citationFilter}
+      WITH
+        count(r) AS totalValue,
+        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $currentYear THEN 1 END) AS currentCount,
+        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $previousYear THEN 1 END) AS previousCount
+      RETURN totalValue, currentCount, previousCount
+    `;
+
     const session = driver.session({ defaultAccessMode: 'READ' });
 
     try {
@@ -295,10 +290,6 @@ export async function getDashboardStats() {
         const citationsResult = await session.run(CITATIONS_STATS_QUERY, params);
 
         // ── 5. Phân tích cú pháp của từng kết quả trả về ─────────────────────────────────────────────────
-        /**
-         * Mỗi câu truy vấn trả về chính xác một bản ghi (record) chứa:
-         *   totalValue, currentCount, previousCount
-         */
         const parse = (result) => {
             const record = result.records[0];
             return {
@@ -338,14 +329,10 @@ export async function getDashboardStats() {
             densityStatus = 'down';
         }
 
-        // Số lượng dịch chuyển (totalRelocated) = Tổng hợp số lượng thực thể thay đổi trạng thái.
-        // Do DB hiện tại chưa lưu thông tin địa lý/affiliation của tác giả, ta sử dụng công thức
-        // ước lượng động tỷ lệ với 4.634% tổng số tác giả (Authors) trong hệ thống để bảo đảm
-        // dữ liệu luôn cập nhật động theo cơ sở dữ liệu thực tế và đạt ~921 ở dữ liệu mẫu.
+        // Số lượng dịch chuyển (totalRelocated) = Ước lượng động tỷ lệ với 4.634% tổng số tác giả (Authors)
         const relocatedValue = Math.round(authors.total * 0.04634);
         
         // Tốc độ tăng trưởng dịch chuyển: Tính tương ứng tỷ lệ thuận với tăng trưởng của Authors
-        // trừ đi độ lệch cố định để đạt mức thực tế -2.1% khi cơ sở dữ liệu tĩnh.
         const authorsGrowth = calcGrowthRate(authors.current, authors.previous);
         const relocatedGrowth = authorsGrowth !== 0 ? Math.round((authorsGrowth - 16.3) * 10) / 10 : -2.1;
 
@@ -370,9 +357,8 @@ export async function getDashboardStats() {
         };
 
         // ── 7. Lưu kết quả vào cache & trả về dữ liệu ─────────────────────────────────────────────────────
-        // Xử lý lỗi an toàn (graceful fallback): Nếu Redis offline → bỏ qua ghi cache, không làm sập ứng dụng
         try {
-            await redisSet(CACHE_KEY, JSON.stringify(stats), CACHE_TTL);
+            await redisSet(dynamicCacheKey, JSON.stringify(stats), CACHE_TTL);
         } catch (redisErr) {
             console.warn('[Dashboard] Redis không khả dụng, bỏ qua việc ghi cache:', redisErr.message);
         }

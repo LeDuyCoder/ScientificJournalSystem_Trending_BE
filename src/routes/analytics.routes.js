@@ -61,6 +61,22 @@ router.get('/trends', fetchTrends);
  *     description: Returns emerging and frontier technology topics categorized by Impact vs Citation Velocity, suitable for bubble chart visualization.
  *     tags:
  *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: subjectArea
+ *         schema:
+ *           type: string
+ *         description: 'Tên lĩnh vực chính của dự án để lọc dữ liệu (ví dụ: Computer Science).'
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: 'Danh sách tên hoặc ID Keyword ngăn cách bởi dấu phẩy để lọc dữ liệu (ví dụ: AI Agent,Machine Learning).'
+ *       - in: query
+ *         name: keywordIds
+ *         schema:
+ *           type: string
+ *         description: '(Tùy chọn khác) Danh sách ID hoặc tên Keyword ngăn cách bởi dấu phẩy để lọc dữ liệu.'
  *     responses:
  *       200:
  *         description: Frontier topics returned successfully

@@ -5,14 +5,71 @@ const CACHE_KEY = 'analytics:frontier:topics:v6';
 const CACHE_TTL = 300; // 5 minutes
 
 /**
+ * Chuẩn bị và phân loại các bộ lọc thành ID và Tên chữ thường (case-insensitive)
+ */
+function prepareFilters(filters) {
+  const subjectArea = filters.subjectArea || '';
+  const keywords = filters.keywords || filters.keywordIds || [];
+
+  const processFilterArray = (arr) => {
+    const ids = [];
+    const namesLower = [];
+    for (const val of arr) {
+      if (val === undefined || val === null || val === '') continue;
+      if (typeof val === 'number') {
+        ids.push(val);
+      } else {
+        const str = String(val).trim();
+        const num = Number(str);
+        if (!Number.isNaN(num) && String(num) === str) {
+          ids.push(num);
+        } else {
+          namesLower.push(str.toLowerCase());
+        }
+        // Cũng đưa chuỗi gốc vào ids để hỗ trợ so khớp trực tiếp id kiểu chuỗi
+        ids.push(str);
+      }
+    }
+    return { ids, namesLower };
+  };
+
+  const kw = processFilterArray(keywords);
+
+  return {
+    subjectArea: typeof subjectArea === 'string' ? subjectArea.trim() : '',
+    keywordIds: kw.ids,
+    keywordNamesLower: kw.namesLower,
+  };
+}
+
+/**
  * Returns processed and sanitized frontier technology topics based on
  * rolling window Impact Factor and micro-cycle Citation Velocity formulas.
  * 
+ * @param {Object} [filters] - Optional filter object
  * @returns {Promise<Array<Object>>} List of processed topics.
  */
-export async function getFrontierTopics() {
+export async function getFrontierTopics(filters = {}) {
+  const {
+    subjectArea,
+    keywordIds,
+    keywordNamesLower,
+  } = prepareFilters(filters);
+
+  // ── 1. Tạo cache key động dựa trên bộ lọc ──
+  const filterParts = [];
+  if (subjectArea) filterParts.push(`subjectArea:${subjectArea}`);
+  if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
+    const sortedKws = [...keywordIds, ...keywordNamesLower].sort().join(',');
+    filterParts.push(`keywords:${sortedKws}`);
+  }
+
+  const dynamicCacheKey = filterParts.length > 0
+    ? `${CACHE_KEY}:filters:${filterParts.join('|')}`
+    : CACHE_KEY;
+
   try {
-    const cachedData = await redisGet(CACHE_KEY);
+    const cachedData = await redisGet(dynamicCacheKey);
     if (cachedData) {
       return JSON.parse(cachedData);
     }
@@ -35,18 +92,29 @@ export async function getFrontierTopics() {
   const session = driver.session({ defaultAccessMode: 'READ' });
 
   try {
-    // 1. Run a lightweight check to count articles in the recent 3 years.
-    // If database is empty or has extremely sparse recent actual data (< 100 articles),
-    // we automatically fall back to simulation mode to distribute nodes dynamically 
-    // and prevent returning all zeroes for indicators.
+    // 1. Run a lightweight check to count articles in the recent 3 years, applying any filters.
+    let countFilter = '';
+    if (subjectArea) {
+      countFilter += ` AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) } `;
+    }
+    if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
+      const kCond = `(toInteger(k.id) IN $keywordIds OR k.id IN $keywordIds OR k.name IN $keywordIds OR toLower(k.name) IN $keywordNamesLower)`;
+      countFilter += ` AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} } `;
+    }
+
     const countResult = await session.run(`
       MATCH (a:Article)
       WHERE coalesce(a.is_deleted, false) = false
         AND a.publication_year IS NOT NULL
-        AND toInteger(a.publication_year) >= $cutoffYear
+        AND toInteger(a.publication_year) >= $cutoffYear ${countFilter}
       RETURN count(a) AS recentCount
-    `, { cutoffYear });
-    
+    `, {
+      cutoffYear,
+      subjectArea,
+      keywordIds,
+      keywordNamesLower,
+    });
+
     const recentCount = countResult.records[0].get('recentCount').toNumber();
     const useSimulation = recentCount < 100;
 
@@ -57,10 +125,22 @@ export async function getFrontierTopics() {
     //    into Last 6 Months (months 7-12) and Previous 6 Months (months 1-6).
     // 3. Dynamic year calculation: reads actual publication_year if available (and not in simulation mode),
     //    otherwise falls back to deterministic simulation based on node IDs.
+    
+    let matchTopicClause = 'MATCH (t:Topic)';
+
+    let articleFilter = '';
+    if (subjectArea) {
+      articleFilter += ` AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) } `;
+    }
+    if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
+      const kCond = `(toInteger(k.id) IN $keywordIds OR k.id IN $keywordIds OR k.name IN $keywordIds OR toLower(k.name) IN $keywordNamesLower)`;
+      articleFilter += ` AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} } `;
+    }
+
     const cypher = `
-      MATCH (t:Topic)
+      ${matchTopicClause}
       MATCH (a:Article)-[:HAS_TOPIC]->(t)
-      WHERE coalesce(a.is_deleted, false) = false
+      WHERE coalesce(a.is_deleted, false) = false ${articleFilter}
       OPTIONAL MATCH (b:Article)-[r:REFERENCES]->(a)
       WHERE coalesce(b.is_deleted, false) = false
       
@@ -105,11 +185,14 @@ export async function getFrontierTopics() {
       LIMIT 30
     `;
 
-    const result = await session.run(cypher, { 
-      currentYear, 
-      prevYear1, 
+    const result = await session.run(cypher, {
+      currentYear,
+      prevYear1,
       prevYear2,
-      useSimulation
+      useSimulation,
+      subjectArea,
+      keywordIds,
+      keywordNamesLower,
     });
 
     const rawRecords = result.records.map(row => {
@@ -138,7 +221,7 @@ export async function getFrontierTopics() {
     });
 
     // ── Normalization & Scaling logic to match FE Bubble Chart coordinate limits [0-10] ──
-    
+
     // Find max raw IF to scale impactFactor values nicely up to ~5.5
     const maxRawIF = Math.max(...rawRecords.map(r => r.rawIF), 0);
     const scaleIF = maxRawIF > 0 ? (5.5 / maxRawIF) : 1.0;
@@ -186,7 +269,7 @@ export async function getFrontierTopics() {
     });
 
     try {
-      await redisSet(CACHE_KEY, JSON.stringify(processed), CACHE_TTL);
+      await redisSet(dynamicCacheKey, JSON.stringify(processed), CACHE_TTL);
     } catch (err) {
       console.warn('Failed to set frontier topics in Redis cache:', err?.message || err);
     }

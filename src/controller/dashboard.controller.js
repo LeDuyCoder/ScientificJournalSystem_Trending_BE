@@ -1,16 +1,26 @@
-/**
- * Bộ điều khiển Express (Express controller) cho các endpoint liên quan đến Dashboard.
- */
-
 import { getDashboardStats } from '../services/dashboard.service.js';
 
 /**
+ * Hàm hỗ trợ phân tích query parameter thành mảng các chuỗi/số sạch.
+ * @param {any} val - Giá trị query parameter.
+ * @returns {Array<string|number>}
+ */
+function parseFilterArray(val) {
+    if (!val) return [];
+    const raw = Array.isArray(val)
+        ? val
+        : String(val).split(',').map(v => v.trim());
+    
+    return raw
+        .map(v => {
+            const num = Number(v);
+            return !Number.isNaN(num) && String(num) === String(v) ? num : v;
+        })
+        .filter(v => v !== '');
+}
+
+/**
  * Endpoint xử lý yêu cầu GET /dashboard/stats
- *
- * Hàm này chịu trách nhiệm:
- * 1. Gọi tầng nghiệp vụ (Service layer) thông qua hàm `getDashboardStats()` để lấy dữ liệu.
- * 2. Phản hồi kết quả về phía Client dưới dạng JSON với mã trạng thái HTTP 200.
- * 3. Nếu xảy ra lỗi trong quá trình lấy dữ liệu, lỗi sẽ được chuyển tiếp sang middleware xử lý lỗi tiếp theo qua hàm `next(err)`.
  *
  * @param {import('express').Request}  req - Đối tượng Request của Express.
  * @param {import('express').Response} res - Đối tượng Response của Express.
@@ -19,8 +29,13 @@ import { getDashboardStats } from '../services/dashboard.service.js';
  */
 export async function getDashboardStatsHandler(req, res, next) {
     try {
-        // Gọi service xử lý logic lấy dữ liệu thống kê từ Neo4j / Redis
-        const data = await getDashboardStats();
+        const filters = {
+            subjectArea: req.query.subjectArea ? String(req.query.subjectArea).trim() : '',
+            keywords: parseFilterArray(req.query.keywords || req.query.keyword || req.query.keywordIds || req.query.keywordId),
+        };
+
+        // Gọi service xử lý logic lấy dữ liệu thống kê từ Neo4j / Redis với bộ lọc
+        const data = await getDashboardStats(filters);
 
         // Trả về phản hồi thành công kèm dữ liệu thống kê
         res.status(200).json({
