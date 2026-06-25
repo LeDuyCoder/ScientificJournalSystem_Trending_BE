@@ -19,7 +19,12 @@ import { searchArticlesByKeyword } from '../services/graph.service.js';
  */
 export async function searchArticles(req, res, next) {
   try {
-    const { keyword } = req.query;
+    const rawKeyword = req.query.keyword;
+
+    const keyword = rawKeyword
+      ? decodeURIComponent(String(rawKeyword)).trim()
+      : '';
+
     const limitRaw = req.query.limit;
 
     if (!keyword || typeof keyword !== 'string') {

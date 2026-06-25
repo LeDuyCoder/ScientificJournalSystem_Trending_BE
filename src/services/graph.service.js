@@ -9,27 +9,48 @@ export async function searchArticlesByKeyword(keyword, options = {}) {
     );
   }
 
-  const limit = Number.isFinite(Number(options.limit))
-    ? Number(options.limit)
-    : 50;
+  // Decode keyword để tránh bị dính machine%20learning
+  function decodeKeyword(value) {
+    if (Array.isArray(value)) {
+      value = value[0] ?? '';
+    }
 
-  const searchKeyword = String(keyword || '').trim();
+    let text = String(value ?? '').replace(/\+/g, ' ').trim();
+
+    // Decode tối đa 2 lần để xử lý cả case bị encode double: %2520 -> %20 -> space
+    for (let i = 0; i < 2; i++) {
+      try {
+        const decoded = decodeURIComponent(text);
+        if (decoded === text) break;
+        text = decoded;
+      } catch {
+        break;
+      }
+    }
+
+    return text.trim();
+  }
+
+  const rawLimit = Number(options.limit);
+
+  const limit =
+    Number.isInteger(rawLimit) && rawLimit > 0
+      ? Math.min(rawLimit, 500)
+      : 50;
+
+  const searchKeyword = decodeKeyword(keyword);
 
   const cypher = `
-    MATCH (a:Article)
-    WHERE
-      $keyword = ''
-      OR toLower(coalesce(a.title, '')) CONTAINS toLower($keyword)
-      OR toLower(coalesce(a.doi, '')) CONTAINS toLower($keyword)
-      OR toLower(toString(coalesce(a.publication_year, ''))) CONTAINS toLower($keyword)
-      OR toLower(toString(coalesce(a.id, ''))) CONTAINS toLower($keyword)
+    MATCH (n:Article)
+    WHERE $keyword = ''
+       OR toLower(coalesce(n.title, '')) CONTAINS toLower($keyword)
 
-    WITH a
+    WITH n
     LIMIT toInteger($limit)
 
-    MATCH (a)-[r:REFERENCES]-(b:Article)
+    OPTIONAL MATCH (n)-[r]-(m)
 
-    RETURN a, r, b
+    RETURN n, r, m
   `;
 
   const session = driver.session({ defaultAccessMode: 'READ' });
@@ -43,31 +64,31 @@ export async function searchArticlesByKeyword(keyword, options = {}) {
     const nodeMap = new Map();
     const relMap = new Map();
 
-    for (const row of result.records) {
-      const a = row.get('a');
-      const b = row.get('b');
-      const r = row.get('r');
+    for (const record of result.records) {
+      const n = record.get('n');
+      const m = record.get('m');
+      const r = record.get('r');
 
-      if (a) {
-        const id = a.identity.toString();
+      if (n) {
+        const id = n.identity.toString();
 
         if (!nodeMap.has(id)) {
           nodeMap.set(id, {
             id,
-            labels: Array.from(a.labels || []),
-            properties: normalizeNeo4jProperties(a.properties || {}),
+            labels: Array.from(n.labels || []),
+            properties: normalizeNeo4jProperties(n.properties || {}),
           });
         }
       }
 
-      if (b) {
-        const id = b.identity.toString();
+      if (m) {
+        const id = m.identity.toString();
 
         if (!nodeMap.has(id)) {
           nodeMap.set(id, {
             id,
-            labels: Array.from(b.labels || []),
-            properties: normalizeNeo4jProperties(b.properties || {}),
+            labels: Array.from(m.labels || []),
+            properties: normalizeNeo4jProperties(m.properties || {}),
           });
         }
       }
@@ -89,6 +110,7 @@ export async function searchArticlesByKeyword(keyword, options = {}) {
 
     return {
       source: 'neo4j',
+      keyword: searchKeyword,
       nodes: Array.from(nodeMap.values()),
       relationships: Array.from(relMap.values()),
     };
