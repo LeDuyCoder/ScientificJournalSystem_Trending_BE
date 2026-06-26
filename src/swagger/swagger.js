@@ -12,36 +12,6 @@ const options = {
         url: '/',
       },
     ],
-    components: {
-      schemas: {
-        StatMetric: {
-          type: 'object',
-          properties: {
-            value: {
-              type: 'number',
-              example: 12500,
-            },
-            growthRate: {
-              type: 'number',
-              example: 12.5,
-            },
-          },
-        },
-        DensityMetric: {
-          type: 'object',
-          properties: {
-            value: {
-              type: 'number',
-              example: 0.84,
-            },
-            status: {
-              type: 'string',
-              example: 'stable',
-            },
-          },
-        },
-      },
-    },
   },
   apis: ['./src/routes/*.js'],
 };
