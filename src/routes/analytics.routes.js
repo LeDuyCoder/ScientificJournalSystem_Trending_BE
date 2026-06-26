@@ -1,6 +1,13 @@
 import express from 'express';
 
-import { fetchTrends, fetchFrontier, fetchDistribution } from '../controller/analytics.controller.js';
+import {
+  fetchTrends,
+  fetchFrontier,
+  fetchDistribution,
+  fetchForecast,
+  getTopEntitiesHandler,
+  fetchGeoDistribution
+} from '../controller/analytics.controller.js';
 
 const router = express.Router();
 
@@ -199,7 +206,225 @@ router.get('/frontier', fetchFrontier);
  */
 router.get('/distribution', fetchDistribution);
 
+/**
+ * @openapi
+ * /analytics/forecast:
+ *   get:
+ *     summary: Get forecast insights for a project
+ *     description: |
+ *       Returns three blocks of insights (PEAK, ALERT, SYNERGY) for a given project,
+ *       based on an analysis of its associated subject categories against global data.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project for which to generate forecast insights.
+ *     responses:
+ *       200:
+ *         description: Forecast insights returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch forecast insights successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       type:
+ *                         type: string
+ *                         enum: [PEAK, ALERT, SYNERGY]
+ *                         example: PEAK
+ *                       title:
+ *                         type: string
+ *                         example: Predictive Peak
+ *                       content:
+ *                         type: string
+ *                         example: "Bio-engineering is projected to reach its citation apex in Q3 2027..."
+ *       400:
+ *         description: Bad Request - project_id is missing.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 400
+ *                 message:
+ *                   type: string
+ *                   example: project_id is required
+ *                 data:
+ *                   type: object
+ *                   nullable: true
+ *                   example: null
+ *       404:
+ *         description: Not Found - Project or its subject categories could not be found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 404
+ *                 message:
+ *                   type: string
+ *                   example: "Project not found"
+ *                 data:
+ *                   type: object
+ *                   nullable: true
+ *                   example: null
+ */
+router.get('/forecast', fetchForecast);
+
+/**
+ * @openapi
+ * /analytics/top-entities:
+ *   get:
+ *     summary: Lấy danh sách các tổ chức/viện nghiên cứu hàng đầu
+ *     description: >
+ *       Trả về danh sách các tổ chức được xếp hạng dựa trên một điểm số tổng hợp (số lượng bài báo, trích dẫn, H-index...).
+ *       API yêu cầu `project_id` để xác định phạm vi phân tích (lĩnh vực, từ khóa) mà project đang theo dõi.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: 'ID của project để xác định phạm vi phân tích.'
+ *       - in: query
+ *         name: entity_type
+ *         schema:
+ *           type: string
+ *           enum: [institution, university, research_center]
+ *         description: 'Loại tổ chức cần xếp hạng. Mặc định là "institution".'
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm bắt đầu lọc dữ liệu.'
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm kết thúc lọc dữ liệu.'
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: 'Số lượng kết quả trả về. Mặc định là 10.'
+ *     responses:
+ *       200:
+ *         description: Lấy dữ liệu thành công.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch top entities successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                         example: "Stanford University"
+ *                       score:
+ *                         type: number
+ *                         example: 94.2
+ */
+router.get('/top-entities', getTopEntitiesHandler);
+
+/**
+ * @openapi
+ * /analytics/geo-distribution:
+ *   get:
+ *     summary: Get geographical research distribution by project
+ *     description: Returns research output density by country matching the project tracking scope and optional filters.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *     responses:
+ *       200:
+ *         description: Geographical metrics returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch geographical metrics successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       countryCode:
+ *                         type: string
+ *                         example: US
+ *                       intensity:
+ *                         type: string
+ *                         enum: [PEAK, HIGH, MEDIUM, LOW]
+ *                         example: PEAK
+ *                       count:
+ *                         type: integer
+ *                         example: 85400
+ *       400:
+ *         description: Bad Request (missing project_id or invalid year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/geo-distribution', fetchGeoDistribution);
+
 export default router;
-
-
-
