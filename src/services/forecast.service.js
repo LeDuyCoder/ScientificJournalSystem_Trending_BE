@@ -140,7 +140,7 @@ function buildKeywordScopeSql(paramIndex) {
   `;
 }
 
-async function getProjectScope(client, projectId) {
+export async function getProjectScope(client, projectId) {
   const projectRes = await client.query(
     `
     SELECT 
