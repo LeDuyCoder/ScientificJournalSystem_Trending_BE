@@ -5,6 +5,7 @@
 import { getPublicationTrends } from '../services/trends.service.js';
 import { getFrontierTopics } from '../services/frontier.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
+import { getGeoDistribution } from '../services/geoDistribution.service.js';
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -124,6 +125,66 @@ export async function fetchForecast(req, res, next) {
       });
     }
     // For unhandled/unexpected errors, let the generic error handler deal with it.
+    next(err);
+  }
+}
+
+/**
+ * Return geographical research distribution metrics for a project.
+ *
+ * Route: GET /analytics/geo-distribution
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchGeoDistribution(req, res, next) {
+  try {
+    const projectId = req.query.project_id;
+
+    if (!projectId) {
+      return res.status(400).json({
+        code: 400,
+        message: 'project_id is required',
+        data: null,
+      });
+    }
+
+    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
+    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
+
+    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid year range',
+        data: null,
+      });
+    }
+
+    const filters = {
+      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
+      keywords: req.query.keywords || req.query.keyword,
+      fromYear,
+      toYear,
+    };
+
+    const data = await getGeoDistribution(projectId, filters);
+
+    return res.json({
+      code: 200,
+      message: 'Fetch geographical metrics successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
     next(err);
   }
 }

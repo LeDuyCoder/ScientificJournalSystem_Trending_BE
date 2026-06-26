@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { fetchTrends, fetchFrontier, fetchForecast } from '../controller/analytics.controller.js';
+import { fetchTrends, fetchFrontier, fetchForecast, fetchGeoDistribution } from '../controller/analytics.controller.js';
 
 const router = express.Router();
 
@@ -206,6 +206,77 @@ router.get('/frontier', fetchFrontier);
  *                   example: null
  */
 router.get('/forecast', fetchForecast);
+
+/**
+ * @openapi
+ * /analytics/geo-distribution:
+ *   get:
+ *     summary: Get geographical research distribution by project
+ *     description: Returns research output density by country matching the project tracking scope and optional filters.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *     responses:
+ *       200:
+ *         description: Geographical metrics returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch geographical metrics successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       countryCode:
+ *                         type: string
+ *                         example: US
+ *                       intensity:
+ *                         type: string
+ *                         enum: [PEAK, HIGH, MEDIUM, LOW]
+ *                         example: PEAK
+ *                       count:
+ *                         type: integer
+ *                         example: 85400
+ *       400:
+ *         description: Bad Request (missing project_id or invalid year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/geo-distribution', fetchGeoDistribution);
 
 export default router;
 
