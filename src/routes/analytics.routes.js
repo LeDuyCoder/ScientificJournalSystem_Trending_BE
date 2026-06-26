@@ -144,7 +144,7 @@ router.get('/frontier', fetchFrontier);
  *     parameters:
  *       - in: query
  *         name: project_id
- *         required: true
+ *         required: false
  *         schema:
  *           type: string
  *         description: 'ID của project cần lấy dữ liệu distribution.'

@@ -150,14 +150,6 @@ export async function fetchDistribution(req, res, next) {
   try {
     const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = req.query;
 
-    if (!project_id) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Missing project_id',
-        data: null
-      });
-    }
-
     if (distribution_type && !['sector', 'impact_quartile'].includes(distribution_type)) {
       return res.status(400).json({
         code: 400,
