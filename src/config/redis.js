@@ -6,12 +6,6 @@ export const redisClient = createClient({
   url: REDIS_URL,
 });
 
-// Lắng nghe sự kiện lỗi kết nối để tránh làm sập ứng dụng (prevent unhandled error crash)
-redisClient.on('error', (err) => {
-  // eslint-disable-next-line no-console
-  console.error('Redis Client Error:', err?.message || err);
-});
-
 /**
  * Connect to Redis if not connected yet.
  *
