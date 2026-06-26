@@ -268,7 +268,14 @@ router.get('/forecast', fetchForecast);
  *                 data:
  *                   type: array
  *                   items:
- *                     $ref: '#/components/schemas/TopEntity'
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                         example: "Stanford University"
+ *                       score:
+ *                         type: number
+ *                         example: 94.2
  */
 router.get('/top-entities', getTopEntitiesHandler);
 

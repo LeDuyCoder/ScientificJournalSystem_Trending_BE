@@ -178,21 +178,28 @@ export async function getDashboardStats(filters = {}) {
         filterParts.push(`project:${projectId}`);
     }
 
-    const dynamicCacheKey = filterParts.length > 0
-        ? `${CACHE_KEY}:filters:${filterParts.join('|')}`
-        : CACHE_KEY;
+    const dynamicCacheKey =
+        filterParts.length > 0
+            ? `${CACHE_KEY}:filters:${filterParts.join('|')}`
+            : CACHE_KEY;
 
-    // Kiểm tra cache Redis
+    // --- Bắt đầu logic Cache ---
+    // 2. Kiểm tra cache Redis trước khi truy vấn DB
     try {
         const cached = await redisGet(dynamicCacheKey);
         if (cached) {
+            // Cache HIT: Dữ liệu tồn tại trong Redis, trả về ngay lập tức
+            console.log(`[Redis] Dashboard stats cache HIT for key: ${dynamicCacheKey}`);
             return JSON.parse(cached); // Cache HIT
         }
+        // Cache MISS: Không tìm thấy dữ liệu, tiếp tục truy vấn Neo4j
+        console.log(`[Redis] Dashboard stats cache MISS for key: ${dynamicCacheKey}`);
     } catch (redisErr) {
         console.warn('[Dashboard] Redis không khả dụng, bỏ quan việc đọc dữ liệu từ cache:', redisErr.message);
     }
+    // --- Kết thúc logic đọc Cache ---
 
-    // ── 2. Kiểm tra cấu hình Neo4j driver ───────────────────────────────────────────────────
+    // ── 3. Kiểm tra cấu hình Neo4j driver ───────────────────────────────────────────────────
     const driver = neo4jDriver;
     if (!driver) {
         throw new Error(
@@ -200,14 +207,14 @@ export async function getDashboardStats(filters = {}) {
         );
     }
 
-    // ── 3. Thiết lập các tham số chu kỳ thời gian ────────────────────────────────────────────────
+    // ── 4. Thiết lập các tham số chu kỳ thời gian ────────────────────────────────────────────────
     const {
         currentYear, previousYear,
         currentStart, currentEnd,
         previousStart, previousEnd,
     } = getPeriodBounds();
 
-    // ── 4. Xây dựng động các câu truy vấn Cypher và tham số lọc ──────────────────────────────
+    // ── 5. Xây dựng động các câu truy vấn Cypher và tham số lọc ──────────────────────────────
     let articleFilter = '';
     let journalFilter = '';
     let authorFilter = '';
@@ -302,7 +309,7 @@ export async function getDashboardStats(filters = {}) {
         const authorsResult = await session.run(AUTHORS_STATS_QUERY, params);
         const citationsResult = await session.run(CITATIONS_STATS_QUERY, params);
 
-        // ── 5. Phân tích cú pháp của từng kết quả trả về ─────────────────────────────────────────────────
+        // ── 6. Phân tích cú pháp của từng kết quả trả về ─────────────────────────────────────────────────
         const parse = (result) => {
             const record = result.records[0];
             return {
@@ -317,7 +324,7 @@ export async function getDashboardStats(filters = {}) {
         const authors = parse(authorsResult);
         const citations = parse(citationsResult);
 
-        // ── 6. Tổng hợp cấu trúc dữ liệu phản hồi theo công thức nghiệp vụ ──────────────────
+        // ── 7. Tổng hợp cấu trúc dữ liệu phản hồi theo công thức nghiệp vụ ──────────────────
         
         // Mật độ trích dẫn (densityIndex) = Tổng số trích dẫn / Tổng số bài báo phát hành
         const densityValue = articles.total > 0
@@ -369,9 +376,11 @@ export async function getDashboardStats(filters = {}) {
             },
         };
 
-        // ── 7. Lưu kết quả vào cache & trả về dữ liệu ─────────────────────────────────────────────────────
+        // --- Bắt đầu logic ghi Cache ---
+        // 8. Lưu kết quả vào cache & trả về dữ liệu
         try {
             await redisSet(dynamicCacheKey, JSON.stringify(stats), CACHE_TTL);
+            console.log(`[Redis] Dashboard stats cached successfully for key: ${dynamicCacheKey}`);
         } catch (redisErr) {
             console.warn('[Dashboard] Redis không khả dụng, bỏ qua việc ghi cache:', redisErr.message);
         }
