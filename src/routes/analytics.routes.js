@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { fetchTrends, fetchFrontier } from '../controller/analytics.controller.js';
+import { fetchTrends, fetchFrontier, fetchForecast } from '../controller/analytics.controller.js';
 
 const router = express.Router();
 
@@ -123,6 +123,89 @@ router.get('/trends', fetchTrends);
  *                   example: Internal Server Error
  */
 router.get('/frontier', fetchFrontier);
+
+/**
+ * @openapi
+ * /analytics/forecast:
+ *   get:
+ *     summary: Get forecast insights for a project
+ *     description: |
+ *       Returns three blocks of insights (PEAK, ALERT, SYNERGY) for a given project,
+ *       based on an analysis of its associated subject categories against global data.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the project for which to generate forecast insights.
+ *     responses:
+ *       200:
+ *         description: Forecast insights returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch forecast insights successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       type:
+ *                         type: string
+ *                         enum: [PEAK, ALERT, SYNERGY]
+ *                         example: PEAK
+ *                       title:
+ *                         type: string
+ *                         example: Predictive Peak
+ *                       content:
+ *                         type: string
+ *                         example: "Bio-engineering is projected to reach its citation apex in Q3 2027..."
+ *       400:
+ *         description: Bad Request - project_id is missing.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 400
+ *                 message:
+ *                   type: string
+ *                   example: project_id is required
+ *                 data:
+ *                   type: object
+ *                   nullable: true
+ *                   example: null
+ *       404:
+ *         description: Not Found - Project or its subject categories could not be found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 404
+ *                 message:
+ *                   type: string
+ *                   example: "Project not found"
+ *                 data:
+ *                   type: object
+ *                   nullable: true
+ *                   example: null
+ */
+router.get('/forecast', fetchForecast);
 
 export default router;
 
