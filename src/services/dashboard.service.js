@@ -1,5 +1,7 @@
 import { neo4jDriver } from '../config/neo4j.js';
 import { redisGet, redisSet } from './redis.service.js';
+import pool from '../config/database.js';
+import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY = 'dashboard:stats';
 const CACHE_TTL = 300; // 5 phút
@@ -147,22 +149,33 @@ function prepareFilters(filters) {
  *
  * @param {Object} [filters] - Bộ lọc tùy chọn để lọc dữ liệu theo Project.
  * @param {string} [filters.subjectArea] - Lĩnh vực theo dõi của dự án.
- * @param {Array<string|number>} [filters.keywords] - Danh sách tên/ID Keyword.
+ * @param {string} [filters.projectId] - ID của project.
  * @returns {Promise<DashboardStats>}
  */
 export async function getDashboardStats(filters = {}) {
-    const {
-        subjectArea,
-        keywordIds,
-        keywordNamesLower,
-    } = prepareFilters(filters);
+    const { projectId } = filters;
+    let subjectArea = '';
+    let keywordIds = [];
+    let keywordNamesLower = [];
+
+    // Nếu có projectId, lấy scope từ PostgreSQL
+    if (projectId) {
+        const pgClient = await pool.connect();
+        try {
+            const scope = await getProjectScope(pgClient, projectId);
+            subjectArea = scope.subjectAreaName;
+            const preparedKeywords = prepareFilters({ keywords: scope.keywordNames });
+            keywordIds = preparedKeywords.keywordIds;
+            keywordNamesLower = preparedKeywords.keywordNamesLower;
+        } finally {
+            pgClient.release();
+        }
+    }
 
     // ── 1. Tạo cache key động dựa trên bộ lọc ──
     const filterParts = [];
-    if (subjectArea) filterParts.push(`subjectArea:${subjectArea}`);
-    if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
-        const sortedKws = [...keywordIds, ...keywordNamesLower].sort().join(',');
-        filterParts.push(`keywords:${sortedKws}`);
+    if (projectId) {
+        filterParts.push(`project:${projectId}`);
     }
 
     const dynamicCacheKey = filterParts.length > 0

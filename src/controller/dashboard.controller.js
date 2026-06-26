@@ -30,8 +30,7 @@ function parseFilterArray(val) {
 export async function getDashboardStatsHandler(req, res, next) {
     try {
         const filters = {
-            subjectArea: req.query.subjectArea ? String(req.query.subjectArea).trim() : '',
-            keywords: parseFilterArray(req.query.keywords || req.query.keyword || req.query.keywordIds || req.query.keywordId),
+            projectId: req.query.project_id ? String(req.query.project_id).trim() : undefined,
         };
 
         // Gọi service xử lý logic lấy dữ liệu thống kê từ Neo4j / Redis với bộ lọc
