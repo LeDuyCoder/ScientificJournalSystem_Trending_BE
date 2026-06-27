@@ -11,6 +11,7 @@ import { getDistribution } from '../services/distribution.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
 import { getGeoDistribution } from '../services/geoDistribution.service.js';
 import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
+import { getCollaborationNetwork } from '../services/network.service.js';
 
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
@@ -347,6 +348,34 @@ export async function fetchImpactQuartiles(req, res, next) {
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Fetch Global Collaboration Network
+ *
+ * Route: GET /analytics/network/collaboration
+ */
+export async function fetchCollaborationNetwork(req, res, next) {
+  try {
+    const payload = { ...req.query, ...req.body };
+    const data = await getCollaborationNetwork(payload);
+
+    res.json({
+      code: 200,
+      message: 'Fetch global collaboration network successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.status || err.code;
+    if (statusCode && Number.isInteger(statusCode) && statusCode !== 500) {
       return res.status(statusCode).json({
         code: statusCode,
         message: err.message,
