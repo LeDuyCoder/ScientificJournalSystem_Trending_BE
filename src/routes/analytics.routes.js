@@ -7,7 +7,8 @@ import {
   fetchForecast,
   getTopEntitiesHandler,
   fetchGeoDistribution,
-  fetchImpactQuartiles
+  fetchImpactQuartiles,
+  fetchJournalQuartileDistribution
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -430,10 +431,10 @@ router.get('/geo-distribution', fetchGeoDistribution);
 
 /**
  * @openapi
- * /analytics/impact-quartiles:
+ * /analytics/journals/quartiles:
  *   get:
- *     summary: Get impact quartile summary for a project
- *     description: Returns the dominant publication quartile by citation/journal ranking matching the project tracking scope and optional filters.
+ *     summary: Get journal quartile distribution for a project
+ *     description: Returns the Scimago quartile distribution of journals related to articles within a project's scope.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -442,30 +443,30 @@ router.get('/geo-distribution', fetchGeoDistribution);
  *         schema:
  *           type: string
  *         required: true
- *         description: The ID of the project.
+ *         description: The ID of the project to get the quartile distribution for.
  *       - in: query
  *         name: subject_area
  *         schema:
  *           type: string
- *         description: Narrow down research output to a specific subject area.
+ *         description: Further filter the articles by a specific subject area name.
  *       - in: query
  *         name: keywords
  *         schema:
  *           type: string
- *         description: Comma-separated list of keywords to filter by.
+ *         description: Comma-separated list of keywords to filter articles by (e.g., "AI,Machine Learning").
  *       - in: query
  *         name: from_year
  *         schema:
  *           type: integer
- *         description: Filter starting from this publication year.
+ *         description: The starting publication year for filtering articles.
  *       - in: query
  *         name: to_year
  *         schema:
  *           type: integer
- *         description: Filter up to this publication year.
+ *         description: The ending publication year for filtering articles.
  *     responses:
  *       200:
- *         description: Impact quartile summary returned successfully.
+ *         description: Quartile distribution data returned successfully.
  *         content:
  *           application/json:
  *             schema:
@@ -476,35 +477,25 @@ router.get('/geo-distribution', fetchGeoDistribution);
  *                   example: 200
  *                 message:
  *                   type: string
- *                   example: Fetch impact quartile summary successfully
+ *                   example: Fetch quartile distribution successfully
  *                 data:
  *                   type: object
  *                   properties:
- *                     title:
- *                       type: string
- *                       example: Impact Quartiles
- *                     description:
- *                       type: string
- *                       example: Dominant publication quartile by citation ranking
- *                     quartile:
- *                       type: string
- *                       nullable: true
- *                       enum: [Q1, Q2, Q3, Q4, null]
- *                       example: Q1
- *                     percentage:
+ *                     totalJournals:
  *                       type: integer
- *                       example: 65
- *                     count:
- *                       type: integer
- *                       example: 650
- *                     totalPublications:
- *                       type: integer
- *                       example: 1000
- *       400:
- *         description: Bad Request (missing project_id or invalid year range)
- *       404:
- *         description: Project not found
+ *                       example: 2400
+ *                     distribution:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           group:
+ *                             type: string
+ *                             example: "Q1 (High Impact)"
+ *                           percentage:
+ *                             type: number
+ *                             example: 42
  */
-router.get('/impact-quartiles', fetchImpactQuartiles);
+router.get('/journals/quartiles', fetchJournalQuartileDistribution);
 
 export default router;

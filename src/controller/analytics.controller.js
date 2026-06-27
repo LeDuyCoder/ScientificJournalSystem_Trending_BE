@@ -11,6 +11,7 @@ import { getDistribution } from '../services/distribution.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
 import { getGeoDistribution } from '../services/geoDistribution.service.js';
 import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
+import { getJournalQuartileDistribution } from '../services/journal-quartile.service.js';
 
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
@@ -45,6 +46,50 @@ export async function fetchTrends(req, res, next) {
       data,
     });
   } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Handler for GET /analytics/journals/quartiles
+ * Fetches and returns the Scimago quartile distribution for journals within a project's scope.
+ *
+ * @param {import('express').Request} req - Express request object.
+ * @param {import('express').Response} res - Express response object.
+ * @param {import('express').NextFunction} next - Express next middleware function.
+ */
+export async function fetchJournalQuartileDistribution(req, res, next) {
+  try {
+    const { project_id, subject_area, keywords, from_year, to_year } = req.query;
+
+    if (!project_id) {
+      return res.status(400).json({ code: 400, message: 'project_id is required', data: null });
+    }
+
+    const fromYear = from_year ? parseInt(from_year, 10) : undefined;
+    const toYear = to_year ? parseInt(to_year, 10) : undefined;
+
+    if ((fromYear && isNaN(fromYear)) || (toYear && isNaN(toYear))) {
+      return res.status(400).json({ code: 400, message: 'from_year and to_year must be numbers', data: null });
+    }
+
+    if (fromYear && toYear && fromYear > toYear) {
+      return res.status(400).json({ code: 400, message: 'Invalid year range', data: null });
+    }
+
+    const data = await getJournalQuartileDistribution({
+      projectId: String(project_id),
+      subjectArea: subject_area ? String(subject_area) : undefined,
+      keywords: keywords ? String(keywords) : undefined,
+      fromYear,
+      toYear,
+    });
+
+    res.status(200).json({ code: 200, message: 'Fetch quartile distribution successfully', data });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ code: err.status, message: err.message, data: null });
+    }
     next(err);
   }
 }
