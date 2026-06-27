@@ -136,22 +136,18 @@ export async function getJournalRanking(filters) {
       journal_metrics_raw AS (
         SELECT 
           jr.journal_id,
-          rm.code,
-          jr.value_txt,
-          ROW_NUMBER() OVER(PARTITION BY jr.journal_id, rm.code ORDER BY jr.year DESC) as rn
+          jr.value_float,
+          ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
         FROM "Journal_Ranking" jr
         JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
         WHERE jr.journal_id IN (SELECT journal_id FROM journal_stats)
-          AND rm.code IN ('IMPACT_FACTOR', 'IF', 'IF_SCORE', 'SJR')
+          AND rm.code = 'SJR'
           ${yearFilter}
       ),
       journal_metrics AS (
         SELECT 
           journal_id,
-          COALESCE(
-            MAX(CASE WHEN code IN ('IMPACT_FACTOR', 'IF', 'IF_SCORE') THEN NULLIF(value_txt, '')::numeric END),
-            MAX(CASE WHEN code = 'SJR' THEN NULLIF(value_txt, '')::numeric END)
-          ) AS impact_factor
+          MAX(value_float) AS impact_factor
         FROM journal_metrics_raw
         WHERE rn = 1
         GROUP BY journal_id
