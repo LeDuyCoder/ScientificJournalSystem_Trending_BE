@@ -1,6 +1,6 @@
 import pool from '../config/database.js';
 import { redisGet, redisSet } from './redis.service.js';
-import logger from '../../utils/logger.js';
+import logger from '../utils/logger.js';
 
 const CACHE_TTL = 180; // 3 phút
 

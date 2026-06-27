@@ -1,27 +1,14 @@
 /**
  * Express controller for analytics endpoints.
  */
-
-import { z } from 'zod';
-import logger from '../../utils/logger.js';
+import logger from '../utils/logger.js';
 import { getTopEntities } from '../services/analytics.service.js';
 import { getPublicationTrends } from '../services/trends.service.js';
 import { getFrontierTopics } from '../services/frontier.service.js';
 import { getDistribution } from '../services/distribution.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
 import { getGeoDistribution } from '../services/geoDistribution.service.js';
-import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
 import { getJournalQuartileDistribution } from '../services/journal-quartile.service.js';
-
-const getTopEntitiesSchema = z.object({
-  project_id: z.string().min(1, 'project_id is required'),
-  entity_type: z
-    .enum(['institution', 'university', 'research_center'])
-    .optional(),
-  from_year: z.coerce.number().int().optional(),
-  to_year: z.coerce.number().int().optional(),
-  limit: z.coerce.number().int().positive().max(50).optional().default(10),
-});
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -60,32 +47,17 @@ export async function fetchTrends(req, res, next) {
  */
 export async function fetchJournalQuartileDistribution(req, res, next) {
   try {
-    const { project_id, subject_area, keywords, from_year, to_year } = req.query;
-
-    if (!project_id) {
-      return res.status(400).json({ code: 400, message: 'project_id is required', data: null });
-    }
-
-    const fromYear = from_year ? parseInt(from_year, 10) : undefined;
-    const toYear = to_year ? parseInt(to_year, 10) : undefined;
-
-    if ((fromYear && isNaN(fromYear)) || (toYear && isNaN(toYear))) {
-      return res.status(400).json({ code: 400, message: 'from_year and to_year must be numbers', data: null });
-    }
-
-    if (fromYear && toYear && fromYear > toYear) {
-      return res.status(400).json({ code: 400, message: 'Invalid year range', data: null });
-    }
+    const { project_id, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const data = await getJournalQuartileDistribution({
       projectId: String(project_id),
       subjectArea: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear,
-      toYear,
+      fromYear: from_year,
+      toYear: to_year,
     });
 
-    res.status(200).json({ code: 200, message: 'Fetch quartile distribution successfully', data });
+    res.json({ code: 200, message: 'Fetch quartile distribution successfully', data });
   } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
@@ -101,21 +73,14 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
  */
 export async function getTopEntitiesHandler(req, res, next) {
   try {
-    const query = getTopEntitiesSchema.parse(req.query);
-
-    if (query.from_year && query.to_year && query.from_year > query.to_year) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range: from_year cannot be greater than to_year',
-      });
-    }
+    const { project_id, entity_type, from_year, to_year, limit } = req.validatedQuery;
 
     const filters = {
-      projectId: query.project_id,
-      entityType: query.entity_type,
-      fromYear: query.from_year,
-      toYear: query.to_year,
-      limit: query.limit,
+      projectId: project_id,
+      entityType: entity_type,
+      fromYear: from_year,
+      toYear: to_year,
+      limit: limit,
     };
 
     const data = await getTopEntities(filters);
@@ -129,25 +94,6 @@ export async function getTopEntitiesHandler(req, res, next) {
     logger.error('Error in getTopEntitiesHandler:', error);
     next(error);
   }
-}
-
-/**
- * Hàm hỗ trợ phân tích query parameter thành mảng các chuỗi/số sạch.
- * @param {any} val - Giá trị query parameter.
- * @returns {Array<string|number>}
- */
-function parseFilterArray(val) {
-  if (!val) return [];
-  const raw = Array.isArray(val)
-    ? val
-    : String(val).split(',').map(v => v.trim());
-  
-  return raw
-    .map(v => {
-      const num = Number(v);
-      return !Number.isNaN(num) && String(num) === String(v) ? num : v;
-    })
-    .filter(v => v !== '');
 }
 
 /**
@@ -165,11 +111,7 @@ function parseFilterArray(val) {
  */
 export async function fetchFrontier(req, res, next) {
   try {
-    const filters = {
-      subjectArea: req.query.subjectArea ? String(req.query.subjectArea).trim() : '',
-      keywords: parseFilterArray(req.query.keywords || req.query.keyword || req.query.keywordIds || req.query.keywordId),
-    };
-
+    const filters = req.validatedQuery;
     const data = await getFrontierTopics(filters);
 
     res.json({
@@ -194,34 +136,9 @@ export async function fetchFrontier(req, res, next) {
  */
 export async function fetchDistribution(req, res, next) {
   try {
-    const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = req.query;
+    const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
-    if (distribution_type && !['sector', 'impact_quartile'].includes(distribution_type)) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid distribution type',
-        data: null
-      });
-    }
-
-    const options = {
-      project_id: String(project_id).trim(),
-      distribution_type: distribution_type ? String(distribution_type).trim() : 'sector',
-      subject_area: subject_area ? String(subject_area).trim() : undefined,
-      keywords: parseFilterArray(keywords),
-      from_year: from_year ? Number(from_year) : undefined,
-      to_year: to_year ? Number(to_year) : undefined,
-    };
-
-    if (options.from_year && options.to_year && options.from_year > options.to_year) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range',
-        data: null
-      });
-    }
-
-    const data = await getDistribution(options);
+    const data = await getDistribution({ project_id, distribution_type, subject_area, keywords, from_year, to_year });
 
     res.json({
       code: 200,
@@ -252,17 +169,9 @@ export async function fetchDistribution(req, res, next) {
  */
 export async function fetchForecast(req, res, next) {
   try {
-    const projectId = req.query.project_id;
+    const { project_id } = req.validatedQuery;
 
-    if (!projectId) {
-      return res.status(400).json({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
-    const data = await getForecastInsights(projectId);
+    const data = await getForecastInsights(project_id);
 
     return res.json({
       code: 200,
@@ -294,99 +203,20 @@ export async function fetchForecast(req, res, next) {
  */
 export async function fetchGeoDistribution(req, res, next) {
   try {
-    const projectId = req.query.project_id;
-
-    if (!projectId) {
-      return res.status(400).json({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
-    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
-    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
-
-    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range',
-        data: null,
-      });
-    }
+    const { project_id, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const filters = {
-      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
-      keywords: req.query.keywords || req.query.keyword,
-      fromYear,
-      toYear,
+      subjectArea: subject_area,
+      keywords: keywords,
+      fromYear: from_year,
+      toYear: to_year,
     };
 
-    const data = await getGeoDistribution(projectId, filters);
+    const data = await getGeoDistribution(project_id, filters);
 
     return res.json({
       code: 200,
       message: 'Fetch geographical metrics successfully',
-      data,
-    });
-  } catch (err) {
-    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
-    if (statusCode !== 500) {
-      return res.status(statusCode).json({
-        code: statusCode,
-        message: err.message,
-        data: null,
-      });
-    }
-    next(err);
-  }
-}
-
-/**
- * Return impact quartile summary metric for a project.
- *
- * Route: GET /analytics/impact-quartiles
- *
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
- * @returns {Promise<void>}
- */
-export async function fetchImpactQuartiles(req, res, next) {
-  try {
-    const projectId = req.query.project_id;
-
-    if (!projectId) {
-      return res.status(400).json({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
-    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
-    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
-
-    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range',
-        data: null,
-      });
-    }
-
-    const filters = {
-      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
-      keywords: req.query.keywords || req.query.keyword,
-      fromYear,
-      toYear,
-    };
-
-    const data = await getImpactQuartiles(projectId, filters);
-
-    return res.json({
-      code: 200,
-      message: 'Fetch impact quartile summary successfully',
       data,
     });
   } catch (err) {

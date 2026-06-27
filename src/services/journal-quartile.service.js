@@ -1,5 +1,5 @@
 import pool from '../config/database.js';
-import logger from '../../utils/logger.js';
+import logger from '../utils/logger.js';
 import { redisGet, redisSet } from './redis.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-quartiles:v1';

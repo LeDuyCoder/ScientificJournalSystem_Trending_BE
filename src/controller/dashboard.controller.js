@@ -29,8 +29,9 @@ function parseFilterArray(val) {
  */
 export async function getDashboardStatsHandler(req, res, next) {
     try {
+        const { project_id } = req.validatedQuery;
         const filters = {
-            projectId: req.query.project_id ? String(req.query.project_id).trim() : undefined,
+            projectId: project_id,
         };
 
         // Gọi service xử lý logic lấy dữ liệu thống kê từ Neo4j / Redis với bộ lọc

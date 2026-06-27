@@ -7,9 +7,17 @@ import {
   fetchForecast,
   getTopEntitiesHandler,
   fetchGeoDistribution,
-  fetchImpactQuartiles,
   fetchJournalQuartileDistribution
 } from '../controller/analytics.controller.js';
+import {
+  validateQuery,
+  getTopEntitiesSchema,
+  prepareFrontierFilters,
+  getDistributionSchema,
+  getForecastSchema,
+  getGeoDistributionSchema,
+  getJournalQuartileSchema,
+} from '../middlewares/analytics.validator.js';
 
 const router = express.Router();
 
@@ -131,7 +139,7 @@ router.get('/trends', fetchTrends);
  *                   type: string
  *                   example: Internal Server Error
  */
-router.get('/frontier', fetchFrontier);
+router.get('/frontier', prepareFrontierFilters, fetchFrontier);
 
 /**
  * Get research landscape and impact quartile distribution.
@@ -206,7 +214,7 @@ router.get('/frontier', fetchFrontier);
  *       404:
  *         description: Project not found
  */
-router.get('/distribution', fetchDistribution);
+router.get('/distribution', validateQuery(getDistributionSchema), fetchDistribution);
 
 /**
  * @openapi
@@ -284,7 +292,7 @@ router.get('/distribution', fetchDistribution);
  *                 message:
  *                   type: string
  *                   example: "Project not found"
- *                 data:
+ *                 data: 
  *                   type: object
  *                   nullable: true
  *                   example: null
@@ -356,7 +364,7 @@ router.get('/forecast', fetchForecast);
  *                         type: number
  *                         example: 94.2
  */
-router.get('/top-entities', getTopEntitiesHandler);
+router.get('/top-entities', validateQuery(getTopEntitiesSchema), getTopEntitiesHandler);
 
 /**
  * @openapi
@@ -427,7 +435,7 @@ router.get('/top-entities', getTopEntitiesHandler);
  *       404:
  *         description: Project not found
  */
-router.get('/geo-distribution', fetchGeoDistribution);
+router.get('/geo-distribution', validateQuery(getGeoDistributionSchema), fetchGeoDistribution);
 
 /**
  * @openapi
@@ -496,6 +504,6 @@ router.get('/geo-distribution', fetchGeoDistribution);
  *                             type: number
  *                             example: 42
  */
-router.get('/journals/quartiles', fetchJournalQuartileDistribution);
+router.get('/journals/quartiles', validateQuery(getJournalQuartileSchema), fetchJournalQuartileDistribution);
 
 export default router;
