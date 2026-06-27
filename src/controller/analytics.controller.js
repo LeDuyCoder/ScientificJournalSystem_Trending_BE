@@ -7,6 +7,7 @@ import logger from '../../utils/logger.js';
 import { getTopEntities } from '../services/analytics.service.js';
 import { getPublicationTrends } from '../services/trends.service.js';
 import { getFrontierTopics } from '../services/frontier.service.js';
+import { getDistribution } from '../services/distribution.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
 import { getGeoDistribution } from '../services/geoDistribution.service.js';
 
@@ -136,6 +137,64 @@ export async function fetchFrontier(req, res, next) {
 }
 
 /**
+ * Fetch research landscape and impact quartile distribution.
+ *
+ * Route: GET /analytics/distribution
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchDistribution(req, res, next) {
+  try {
+    const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = req.query;
+
+    if (distribution_type && !['sector', 'impact_quartile'].includes(distribution_type)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid distribution type',
+        data: null
+      });
+    }
+
+    const options = {
+      project_id: String(project_id).trim(),
+      distribution_type: distribution_type ? String(distribution_type).trim() : 'sector',
+      subject_area: subject_area ? String(subject_area).trim() : undefined,
+      keywords: parseFilterArray(keywords),
+      from_year: from_year ? Number(from_year) : undefined,
+      to_year: to_year ? Number(to_year) : undefined,
+    };
+
+    if (options.from_year && options.to_year && options.from_year > options.to_year) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid year range',
+        data: null
+      });
+    }
+
+    const data = await getDistribution(options);
+
+    res.json({
+      code: 200,
+      message: 'Fetch distribution successfully',
+      data,
+    });
+  } catch (err) {
+    if (err.status === 404) {
+      return res.status(404).json({
+        code: 404,
+        message: err.message,
+        data: null
+      });
+    }
+    next(err);
+  }
+}
+
+/**
  * Returns forecast insights (PEAK, ALERT, SYNERGY) for a given project.
  *
  * Route: GET /analytics/forecast
@@ -165,7 +224,6 @@ export async function fetchForecast(req, res, next) {
       data,
     });
   } catch (err) {
-    // The service layer should throw errors with a `code` property (e.g., 404)
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
        return res.status(statusCode).json({
@@ -174,7 +232,6 @@ export async function fetchForecast(req, res, next) {
         data: null,
       });
     }
-    // For unhandled/unexpected errors, let the generic error handler deal with it.
     next(err);
   }
 }

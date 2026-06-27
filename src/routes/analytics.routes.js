@@ -3,6 +3,7 @@ import express from 'express';
 import {
   fetchTrends,
   fetchFrontier,
+  fetchDistribution,
   fetchForecast,
   getTopEntitiesHandler,
   fetchGeoDistribution
@@ -131,6 +132,81 @@ router.get('/trends', fetchTrends);
 router.get('/frontier', fetchFrontier);
 
 /**
+ * Get research landscape and impact quartile distribution.
+ *
+ * @openapi
+ * /analytics/distribution:
+ *   get:
+ *     summary: Get research landscape sector or impact quartile distribution
+ *     description: Returns percentage distribution for charts based on project tracking scope.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: false
+ *         schema:
+ *           type: string
+ *         description: 'ID của project cần lấy dữ liệu distribution.'
+ *       - in: query
+ *         name: distribution_type
+ *         schema:
+ *           type: string
+ *           enum: [sector, impact_quartile]
+ *         description: 'Loại phân bổ cần lấy. Mặc định là sector.'
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo subject area cụ thể.'
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo danh sách keyword ngăn cách bởi dấu phẩy.'
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm bắt đầu lọc dữ liệu.'
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm kết thúc lọc dữ liệu.'
+ *     responses:
+ *       200:
+ *         description: Distribution data returned successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch distribution successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                         example: Biotech
+ *                       percentage:
+ *                         type: number
+ *                         example: 42
+ *       400:
+ *         description: Bad Request (missing project_id, invalid type or year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/distribution', fetchDistribution);
+
+/**
  * @openapi
  * /analytics/forecast:
  *   get:
@@ -144,7 +220,7 @@ router.get('/frontier', fetchFrontier);
  *       - in: query
  *         name: project_id
  *         schema:
- *           type: integer
+ *           type: string
  *         required: true
  *         description: The ID of the project for which to generate forecast insights.
  *     responses:
