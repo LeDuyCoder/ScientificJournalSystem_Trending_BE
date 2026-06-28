@@ -23,6 +23,33 @@ const router = express.Router();
  *     summary: Get publication & citation historical trends
  *     tags:
  *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: 'ID của project để xác định phạm vi phân tích.'
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo subject area cụ thể.'
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo danh sách keyword ngăn cách bởi dấu phẩy.'
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm bắt đầu lọc dữ liệu.'
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm kết thúc lọc dữ liệu.'
  *     responses:
  *       200:
  *         description: Trend data returned successfully

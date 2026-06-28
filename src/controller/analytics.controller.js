@@ -39,7 +39,9 @@ const getTopEntitiesSchema = z.object({
  */
 export async function fetchTrends(req, res, next) {
   try {
-    const data = await getPublicationTrends();
+    const payload = { ...req.query, ...req.body };
+    
+    const data = await getPublicationTrends(payload);
 
     res.json({
       code: 200,
