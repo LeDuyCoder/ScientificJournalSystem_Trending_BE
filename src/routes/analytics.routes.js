@@ -12,7 +12,7 @@ import {
   getGeoDistributionSchema, getCountryCollaborationChordSchema,
   getJournalQuartileSchema,
   getJournalRankingSchema,
-  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema
+  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -25,7 +25,8 @@ import {
   fetchJournalQuartileDistribution,
   fetchJournalRanking, fetchCountryCollaborationChord,
   fetchRankings,
-  fetchProductivityMatrix
+  fetchProductivityMatrix,
+  fetchJournalMigration
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -883,5 +884,37 @@ router.get('/matrix/productivity', validateQuery(getProductivityMatrixSchema), f
  *         description: Project not found.
  */
 router.get('/network/chord', validateQuery(getCountryCollaborationChordSchema), fetchCountryCollaborationChord);
+
+/**
+ * @openapi
+ * /analytics/journals/migration:
+ *   get:
+ *     summary: Get journal migration analysis
+ *     description: Returns flow of journal access model migration between two given years.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *       - in: query
+ *         name: include_legacy
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Migration analysis returned successfully.
+ */
+router.get('/journals/migration', validateQuery(getJournalMigrationSchema), fetchJournalMigration);
 
 export default router;
