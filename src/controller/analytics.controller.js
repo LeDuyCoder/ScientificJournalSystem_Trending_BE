@@ -16,6 +16,8 @@ import { getInfluentialRankings } from "../services/rankings.service.js";
 import { getProductivityMatrix } from "../services/productivityMatrix.service.js";
 import { getCountryCollaborationChord } from "../services/countryCollaboration.service.js";
 import { getJournalMigrationAnalysis } from '../services/migration.service.js';
+import { getKeywordVectors } from '../services/keywordVectors.service.js';
+import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -498,5 +500,182 @@ export async function fetchCountryCollaborationChord(req, res, next) {
       return res.status(404).json({ code: 404, message: error.message, data: null });
     }
     next(error);
+  }
+}
+
+/**
+ * Return keyword growth and volume trend vectors for a project.
+ *
+ * Route: GET /analytics/keywords/vectors
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchKeywordVectors(req, res, next) {
+  try {
+    const projectId = req.query.project_id;
+
+    if (!projectId) {
+      return res.status(400).json({
+        code: 400,
+        message: 'project_id is required',
+        data: null,
+      });
+    }
+
+    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
+    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
+
+    if (fromYear !== undefined && Number.isNaN(fromYear)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid from_year parameter',
+        data: null,
+      });
+    }
+    if (toYear !== undefined && Number.isNaN(toYear)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid to_year parameter',
+        data: null,
+      });
+    }
+
+    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid year range',
+        data: null,
+      });
+    }
+
+    let windowMonths = 12;
+    if (req.query.window_months !== undefined) {
+      const parsedWindow = Number(req.query.window_months);
+      if (Number.isNaN(parsedWindow) || parsedWindow <= 0 || parsedWindow > 36) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid window_months',
+          data: null,
+        });
+      }
+      windowMonths = parsedWindow;
+    }
+
+    let limit = 10;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid limit',
+          data: null,
+        });
+      }
+      limit = parsedLimit > 50 ? 50 : parsedLimit;
+    }
+
+    const filters = {
+      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
+      keywords: req.query.keywords || req.query.keyword,
+      fromYear,
+      toYear,
+      windowMonths,
+      limit,
+    };
+
+    const data = await getKeywordVectors(projectId, filters);
+
+    return res.json({
+      code: 200,
+      message: 'Fetch trend vectors successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Return search suggestions for dashboard search input.
+ *
+ * Route: GET /dashboard/search
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchDashboardSearch(req, res, next) {
+  try {
+    const q = req.query.q !== undefined ? String(req.query.q) : '';
+    const qClean = q.trim();
+
+    // 1. If q is missing or too short, return 200 with empty suggestions array
+    if (!q || qClean.length < 2) {
+      return res.json({
+        code: 200,
+        message: 'Search suggestions fetched successfully',
+        data: {
+          suggestions: [],
+        },
+      });
+    }
+
+    const type = req.query.type ? String(req.query.type).toLowerCase().trim() : 'all';
+    const allowedTypes = ['all', 'article', 'journal', 'author', 'institution', 'keyword', 'topic'];
+
+    if (!allowedTypes.includes(type)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid search type',
+        data: null,
+      });
+    }
+
+    let limit = 8;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid limit',
+          data: null,
+        });
+      }
+      limit = parsedLimit > 20 ? 20 : parsedLimit;
+    }
+
+    const projectId = req.query.project_id ? req.query.project_id : null;
+
+    const suggestions = await getDashboardSearchSuggestions(qClean, type, projectId, limit);
+
+    return res.json({
+      code: 200,
+      message: 'Search suggestions fetched successfully',
+      data: {
+        suggestions,
+      },
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
   }
 }
