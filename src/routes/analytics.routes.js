@@ -9,7 +9,7 @@ import {
   getDistributionSchema,
   getForecastSchema,
   getTopEntitiesSchema,
-  getGeoDistributionSchema,
+  getGeoDistributionSchema, getCountryCollaborationChordSchema,
   getJournalQuartileSchema,
   getJournalRankingSchema,
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema
@@ -23,7 +23,7 @@ import {
   fetchGeoDistribution,
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking,
+  fetchJournalRanking, fetchCountryCollaborationChord,
   fetchRankings,
   fetchProductivityMatrix
 } from '../controller/analytics.controller.js';
@@ -835,5 +835,53 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *         description: Project not found
  */
 router.get('/matrix/productivity', validateQuery(getProductivityMatrixSchema), fetchProductivityMatrix);
+
+/**
+ * @openapi
+ * /analytics/network/chord:
+ *   get:
+ *     summary: Get country collaboration chord data
+ *     description: Returns data for rendering a chord diagram of research collaboration between countries, based on co-authored articles within a project's scope.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema: { type: string }
+ *         required: true
+ *         description: The ID of the project to get the country collaboration chord for.
+ *       - in: query
+ *         name: subject_area
+ *         schema: { type: string }
+ *         description: Further filter by a specific subject area name.
+ *       - in: query
+ *         name: keywords
+ *         schema: { type: string }
+ *         description: Comma-separated list of keywords to filter by (e.g., "AI,Machine Learning").
+ *       - in: query
+ *         name: from_year
+ *         schema: { type: integer }
+ *         description: The starting publication year for filtering articles.
+ *       - in: query
+ *         name: to_year
+ *         schema: { type: integer }
+ *         description: The ending publication year for filtering articles.
+ *       - in: query
+ *         name: limit_countries
+ *         schema: { type: integer, default: 10, maximum: 30 }
+ *         description: Maximum number of top collaborating countries to include.
+ *       - in: query
+ *         name: min_value
+ *         schema: { type: integer, default: 1 }
+ *         description: Minimum co-authorship value for a pair to be included.
+ *     responses:
+ *       200:
+ *         description: Collaboration chord data returned successfully.
+ *       400:
+ *         description: Bad Request (e.g., missing project_id, invalid year range or limits).
+ *       404:
+ *         description: Project not found.
+ */
+router.get('/network/chord', validateQuery(getCountryCollaborationChordSchema), fetchCountryCollaborationChord);
 
 export default router;
