@@ -14,6 +14,7 @@ import { getJournalQuartileDistribution } from '../services/journal-quartile.ser
 import { getJournalRanking } from '../services/journal-ranking.service.js';
 import { getInfluentialRankings } from '../services/rankings.service.js';
 import { getProductivityMatrix } from '../services/productivityMatrix.service.js';
+import { getKeywordVectors } from '../services/keywordVectors.service.js';
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -429,6 +430,109 @@ export async function fetchProductivityMatrix(req, res, next) {
     return res.json({
       code: 200,
       message: 'Fetch matrix points successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Return keyword growth and volume trend vectors for a project.
+ *
+ * Route: GET /analytics/keywords/vectors
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchKeywordVectors(req, res, next) {
+  try {
+    const projectId = req.query.project_id;
+
+    if (!projectId) {
+      return res.status(400).json({
+        code: 400,
+        message: 'project_id is required',
+        data: null,
+      });
+    }
+
+    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
+    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
+
+    if (fromYear !== undefined && Number.isNaN(fromYear)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid from_year parameter',
+        data: null,
+      });
+    }
+    if (toYear !== undefined && Number.isNaN(toYear)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid to_year parameter',
+        data: null,
+      });
+    }
+
+    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid year range',
+        data: null,
+      });
+    }
+
+    let windowMonths = 12;
+    if (req.query.window_months !== undefined) {
+      const parsedWindow = Number(req.query.window_months);
+      if (Number.isNaN(parsedWindow) || parsedWindow <= 0 || parsedWindow > 36) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid window_months',
+          data: null,
+        });
+      }
+      windowMonths = parsedWindow;
+    }
+
+    let limit = 10;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid limit',
+          data: null,
+        });
+      }
+      limit = parsedLimit > 50 ? 50 : parsedLimit;
+    }
+
+    const filters = {
+      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
+      keywords: req.query.keywords || req.query.keyword,
+      fromYear,
+      toYear,
+      windowMonths,
+      limit,
+    };
+
+    const data = await getKeywordVectors(projectId, filters);
+
+    return res.json({
+      code: 200,
+      message: 'Fetch trend vectors successfully',
       data,
     });
   } catch (err) {
