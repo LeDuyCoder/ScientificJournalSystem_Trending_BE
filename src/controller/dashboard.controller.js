@@ -1,25 +1,6 @@
 import { getDashboardStats } from '../services/dashboard.service.js';
 
 /**
- * Hàm hỗ trợ phân tích query parameter thành mảng các chuỗi/số sạch.
- * @param {any} val - Giá trị query parameter.
- * @returns {Array<string|number>}
- */
-function parseFilterArray(val) {
-    if (!val) return [];
-    const raw = Array.isArray(val)
-        ? val
-        : String(val).split(',').map(v => v.trim());
-    
-    return raw
-        .map(v => {
-            const num = Number(v);
-            return !Number.isNaN(num) && String(num) === String(v) ? num : v;
-        })
-        .filter(v => v !== '');
-}
-
-/**
  * Endpoint xử lý yêu cầu GET /dashboard/stats
  *
  * @param {import('express').Request}  req - Đối tượng Request của Express.
@@ -29,8 +10,10 @@ function parseFilterArray(val) {
  */
 export async function getDashboardStatsHandler(req, res, next) {
     try {
+        const { project_id } = req.validatedQuery;
+
         const filters = {
-            projectId: req.query.project_id ? String(req.query.project_id).trim() : undefined,
+            projectId: project_id,
         };
 
         // Gọi service xử lý logic lấy dữ liệu thống kê từ Neo4j / Redis với bộ lọc
