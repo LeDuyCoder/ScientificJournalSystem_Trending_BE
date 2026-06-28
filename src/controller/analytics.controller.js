@@ -11,7 +11,9 @@ import { getDistribution } from '../services/distribution.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
 import { getGeoDistribution } from '../services/geoDistribution.service.js';
 import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
+import { getCollaborationNetwork } from '../services/network.service.js';
 import { getJournalQuartileDistribution } from '../services/journal-quartile.service.js';
+import { getJournalRanking } from '../services/journal-ranking.service.js';
 import { getInfluentialRankings } from '../services/rankings.service.js';
 import { getProductivityMatrix } from '../services/productivityMatrix.service.js';
 
@@ -40,7 +42,9 @@ const getTopEntitiesSchema = z.object({
  */
 export async function fetchTrends(req, res, next) {
   try {
-    const data = await getPublicationTrends();
+    const payload = { ...req.query, ...req.body };
+    
+    const data = await getPublicationTrends(payload);
 
     res.json({
       code: 200,
@@ -88,6 +92,56 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
     });
 
     res.status(200).json({ code: 200, message: 'Fetch quartile distribution successfully', data });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ code: err.status, message: err.message, data: null });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Handler for GET /analytics/journals/ranking
+ * Fetches and returns journal rankings within a project's scope.
+ *
+ * @param {import('express').Request} req - Express request object.
+ * @param {import('express').Response} res - Express response object.
+ * @param {import('express').NextFunction} next - Express next middleware function.
+ */
+export async function fetchJournalRanking(req, res, next) {
+  try {
+    const { project_id, subject_area, keywords, from_year, to_year, limit } = req.query;
+
+    if (!project_id) {
+      return res.status(400).json({ code: 400, message: 'project_id is required', data: null });
+    }
+
+    const fromYear = from_year ? parseInt(from_year, 10) : undefined;
+    const toYear = to_year ? parseInt(to_year, 10) : undefined;
+    const parsedLimit = limit !== undefined ? parseInt(limit, 10) : 5;
+
+    if ((fromYear && isNaN(fromYear)) || (toYear && isNaN(toYear))) {
+      return res.status(400).json({ code: 400, message: 'from_year and to_year must be numbers', data: null });
+    }
+
+    if (fromYear && toYear && fromYear > toYear) {
+      return res.status(400).json({ code: 400, message: 'Invalid year range', data: null });
+    }
+
+    if (isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 50) {
+      return res.status(400).json({ code: 400, message: 'limit must be a positive integer between 1 and 50', data: null });
+    }
+
+    const data = await getJournalRanking({
+      projectId: String(project_id),
+      subjectArea: subject_area ? String(subject_area) : undefined,
+      keywords: keywords ? String(keywords) : undefined,
+      fromYear,
+      toYear,
+      limit: parsedLimit,
+    });
+
+    res.status(200).json({ code: 200, message: 'Fetch journal rankings successfully', data });
   } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
@@ -394,6 +448,34 @@ export async function fetchImpactQuartiles(req, res, next) {
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Fetch Global Collaboration Network
+ *
+ * Route: GET /analytics/network/collaboration
+ */
+export async function fetchCollaborationNetwork(req, res, next) {
+  try {
+    const payload = { ...req.query, ...req.body };
+    const data = await getCollaborationNetwork(payload);
+
+    res.json({
+      code: 200,
+      message: 'Fetch global collaboration network successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.status || err.code;
+    if (statusCode && Number.isInteger(statusCode) && statusCode !== 500) {
       return res.status(statusCode).json({
         code: statusCode,
         message: err.message,
