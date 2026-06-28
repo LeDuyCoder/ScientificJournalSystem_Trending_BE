@@ -1,19 +1,20 @@
 /**
  * Express controller for analytics endpoints.
  */
-import logger from '../../utils/logger.js';
-import { getTopEntities } from '../services/analytics.service.js';
-import { getPublicationTrends } from '../services/trends.service.js';
-import { getFrontierTopics } from '../services/frontier.service.js';
-import { getDistribution } from '../services/distribution.service.js';
-import { getForecastInsights } from '../services/forecast.service.js';
-import { getGeoDistribution } from '../services/geoDistribution.service.js';
-import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
-import { getCollaborationNetwork } from '../services/network.service.js';
-import { getJournalQuartileDistribution } from '../services/journal-quartile.service.js';
-import { getJournalRanking } from '../services/journal-ranking.service.js';
-import { getInfluentialRankings } from '../services/rankings.service.js';
-import { getProductivityMatrix } from '../services/productivityMatrix.service.js';
+import logger from "../../utils/logger.js";
+import { getTopEntities } from "../services/analytics.service.js";
+import { getPublicationTrends } from "../services/trends.service.js";
+import { getFrontierTopics } from "../services/frontier.service.js";
+import { getDistribution } from "../services/distribution.service.js";
+import { getForecastInsights } from "../services/forecast.service.js";
+import { getGeoDistribution } from "../services/geoDistribution.service.js";
+import { getImpactQuartiles } from "../services/impactQuartiles.service.js";
+import { getCollaborationNetwork } from "../services/network.service.js";
+import { getJournalQuartileDistribution } from "../services/journal-quartile.service.js";
+import { getJournalRanking } from "../services/journal-ranking.service.js";
+import { getInfluentialRankings } from "../services/rankings.service.js";
+import { getProductivityMatrix } from "../services/productivityMatrix.service.js";
+import { getCountryCollaborationChord } from "../services/countryCollaboration.service.js";
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -35,7 +36,7 @@ export async function fetchTrends(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch publication trends successfully',
+      message: "Fetch publication trends successfully",
       data,
     });
   } catch (err) {
@@ -63,7 +64,11 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
       toYear: to_year,
     });
 
-    res.status(200).json({ code: 200, message: 'Fetch quartile distribution successfully', data });
+    res.status(200).json({
+      code: 200,
+      message: "Fetch quartile distribution successfully",
+      data,
+    });
   } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
@@ -93,7 +98,11 @@ export async function fetchJournalRanking(req, res, next) {
       limit: limit,
     });
 
-    res.status(200).json({ code: 200, message: 'Fetch journal rankings successfully', data });
+    res.status(200).json({
+      code: 200,
+      message: "Fetch journal rankings successfully",
+      data,
+    });
   } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
@@ -122,15 +131,14 @@ export async function getTopEntitiesHandler(req, res, next) {
 
     res.status(200).json({
       code: 200,
-      message: 'Fetch top entities successfully',
+      message: "Fetch top entities successfully",
       data,
     });
   } catch (error) {
-    logger.error('Error in getTopEntitiesHandler:', error);
+    logger.error("Error in getTopEntitiesHandler:", error);
     next(error);
   }
 }
-
 
 /**
  * Return frontier technology topics based on Impact vs Velocity.
@@ -152,7 +160,7 @@ export async function fetchFrontier(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch frontier topics successfully',
+      message: "Fetch frontier topics successfully",
       data,
     });
   } catch (err) {
@@ -187,7 +195,7 @@ export async function fetchDistribution(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch distribution successfully',
+      message: "Fetch distribution successfully",
       data,
     });
   } catch (err) {
@@ -195,7 +203,7 @@ export async function fetchDistribution(req, res, next) {
       return res.status(404).json({
         code: 404,
         message: err.message,
-        data: null
+        data: null,
       });
     }
     next(err);
@@ -221,7 +229,7 @@ export async function fetchForecast(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch forecast insights successfully',
+      message: "Fetch forecast insights successfully",
       data,
     });
   } catch (err) {
@@ -262,7 +270,7 @@ export async function fetchGeoDistribution(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch geographical metrics successfully',
+      message: "Fetch geographical metrics successfully",
       data,
     });
   } catch (err) {
@@ -303,7 +311,7 @@ export async function fetchImpactQuartiles(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch impact quartile summary successfully',
+      message: "Fetch impact quartile summary successfully",
       data,
     });
   } catch (err) {
@@ -330,7 +338,7 @@ export async function fetchCollaborationNetwork(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch global collaboration network successfully',
+      message: "Fetch global collaboration network successfully",
       data,
     });
   } catch (err) {
@@ -379,7 +387,7 @@ export async function fetchRankings(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch influential rankings successfully',
+      message: "Fetch influential rankings successfully",
       data,
     });
   } catch (err) {
@@ -428,7 +436,7 @@ export async function fetchProductivityMatrix(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch matrix points successfully',
+      message: "Fetch matrix points successfully",
       data,
     });
   } catch (err) {
@@ -441,5 +449,27 @@ export async function fetchProductivityMatrix(req, res, next) {
       });
     }
     next(err);
+  }
+}
+
+/**
+ * Handler để lấy dữ liệu Country Collaboration Chord.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+export async function fetchCountryCollaborationChord(req, res, next) {
+  try {
+    const data = await getCountryCollaborationChord(req.validatedQuery);
+    res.status(200).json({
+      code: 200,
+      message: "Fetch collaboration chord successfully",
+      data: data,
+    });
+  } catch (error) {
+    if (error.status === 404) {
+      return res.status(404).json({ code: 404, message: error.message, data: null });
+    }
+    next(error);
   }
 }
