@@ -1,6 +1,20 @@
 import express from 'express';
 
 import {
+  validateQuery
+} from '../middlewares/analytics.validator.js';
+import {
+  getTrendsSchema,
+  getFrontierSchema,
+  getDistributionSchema,
+  getForecastSchema,
+  getTopEntitiesSchema,
+  getGeoDistributionSchema,
+  getJournalQuartileSchema,
+  getJournalRankingSchema,
+  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema
+} from '../middlewares/analytics.validator.js';
+import {
   fetchTrends,
   fetchFrontier,
   fetchDistribution,
@@ -10,7 +24,10 @@ import {
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
   fetchJournalRanking,
-  fetchTopicIntensityMatrix
+  fetchTopicIntensityMatrix,
+  fetchRankings,
+  fetchProductivityMatrix,
+  fetchCollaborationNetwork
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -24,6 +41,31 @@ const router = express.Router();
  *     summary: Get publication & citation historical trends
  *     tags:
  *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema: { type: string }
+ *         description: 'ID của project để xác định phạm vi phân tích. Nếu không có, sẽ lấy dữ liệu toàn cục.'
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo subject area cụ thể.'
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo danh sách keyword ngăn cách bởi dấu phẩy.'
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm bắt đầu lọc dữ liệu.'
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm kết thúc lọc dữ liệu.'
  *     responses:
  *       200:
  *         description: Trend data returned successfully
@@ -58,9 +100,9 @@ const router = express.Router();
  *                             type: array
  *                             items:
  *                               type: integer
- *                             example: [12000, 15000, 18500, 22000, 28000, 32950]
+ *                             example: [120, 150, 185, 220, 280, 329]
  */
-router.get('/trends', fetchTrends);
+router.get('/trends', validateQuery(getTrendsSchema), fetchTrends);
 
 /**
  * Get emerging and frontier tech topics based on Impact vs Velocity.
@@ -132,8 +174,7 @@ router.get('/trends', fetchTrends);
  *                 message:
  *                   type: string
  *                   example: Internal Server Error
- */
-router.get('/frontier', fetchFrontier);
+ */router.get('/frontier', validateQuery(getFrontierSchema), fetchFrontier);
 
 /**
  * Get research landscape and impact quartile distribution.
@@ -183,7 +224,7 @@ router.get('/frontier', fetchFrontier);
  *         description: Distribution data returned successfully
  *         content:
  *           application/json:
- *             schema:
+ *             schema: 
  *               type: object
  *               properties:
  *                 code:
@@ -208,7 +249,7 @@ router.get('/frontier', fetchFrontier);
  *       404:
  *         description: Project not found
  */
-router.get('/distribution', fetchDistribution);
+router.get('/distribution', validateQuery(getDistributionSchema), fetchDistribution);
 
 /**
  * @openapi
@@ -291,7 +332,7 @@ router.get('/distribution', fetchDistribution);
  *                   nullable: true
  *                   example: null
  */
-router.get('/forecast', fetchForecast);
+router.get('/forecast', validateQuery(getForecastSchema), fetchForecast);
 
 /**
  * @openapi
@@ -357,8 +398,7 @@ router.get('/forecast', fetchForecast);
  *                       score:
  *                         type: number
  *                         example: 94.2
- */
-router.get('/top-entities', getTopEntitiesHandler);
+ */router.get('/top-entities', validateQuery(getTopEntitiesSchema), getTopEntitiesHandler);
 
 /**
  * @openapi
@@ -429,7 +469,7 @@ router.get('/top-entities', getTopEntitiesHandler);
  *       404:
  *         description: Project not found
  */
-router.get('/geo-distribution', fetchGeoDistribution);
+router.get('/geo-distribution', validateQuery(getGeoDistributionSchema), fetchGeoDistribution);
 
 /**
  * @openapi
@@ -497,8 +537,7 @@ router.get('/geo-distribution', fetchGeoDistribution);
  *                           percentage:
  *                             type: number
  *                             example: 42
- */
-router.get('/journals/quartiles', fetchJournalQuartileDistribution);
+ */router.get('/journals/quartiles', validateQuery(getJournalQuartileSchema), fetchJournalQuartileDistribution);
 
 /**
  * @openapi
@@ -564,7 +603,239 @@ router.get('/journals/quartiles', fetchJournalQuartileDistribution);
  *                       impactFactor:
  *                         type: number
  */
-router.get('/journals/ranking', fetchJournalRanking);
+router.get('/journals/ranking', validateQuery(getJournalRankingSchema), fetchJournalRanking);
+
+/**
+ * @openapi
+ * /analytics/network/collaboration:
+ *   get:
+ *     summary: Get global collaboration network
+ *     description: Returns a network graph (nodes and edges) of authors and institutions collaborating in the given project scope.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit_nodes
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of nodes to return.
+ *       - in: query
+ *         name: min_weight
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Minimum weight of edges to include.
+ *     responses:
+ *       200:
+ *         description: Collaboration network returned successfully.
+ *       400:
+ *         description: Bad Request (missing project_id)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/network/collaboration', validateQuery(getCollaborationNetworkSchema), fetchCollaborationNetwork);
+
+/**
+ * @openapi
+ * /analytics/rankings:
+ *   get:
+ *     summary: Fetch influential rankings (authors and institutions)
+ *     description: Returns rankings of the top authors and leading research institutions matching the project's tracking scope and optional client filters.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Optional subject area filter.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 5
+ *         description: Maximum number of entities in each list.
+ *     responses:
+ *       200:
+ *         description: Influential rankings returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch influential rankings successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     authors:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           rank:
+ *                             type: integer
+ *                             example: 1
+ *                           name:
+ *                             type: string
+ *                             example: Dr. Helena Vance
+ *                           score:
+ *                             type: number
+ *                             example: 94.2
+ *                           metric:
+ *                             type: string
+ *                             example: Impact Score
+ *                     institutions:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           rank:
+ *                             type: integer
+ *                             example: 1
+ *                           name:
+ *                             type: string
+ *                             example: Stanford Bio-Dynamics Lab
+ *                           score:
+ *                             type: number
+ *                             example: 98.1
+ *                           metric:
+ *                             type: string
+ *                             example: Citations
+ *       400:
+ *         description: Bad Request (missing project_id, invalid limit or year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
+
+/**
+ * @openapi
+ * /analytics/matrix/productivity:
+ *   get:
+ *     summary: Get author productivity vs impact matrix data
+ *     description: Returns data coordinates (yearlyOutput, hIndex) for each author within the project tracking scope and optional client filters.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Optional subject area filter.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of author points to return.
+ *     responses:
+ *       200:
+ *         description: Productivity matrix points returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch matrix points successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       authorId:
+ *                         type: string
+ *                         example: "12345"
+ *                       yearlyOutput:
+ *                         type: number
+ *                         example: 12
+ *                       hIndex:
+ *                         type: number
+ *                         example: 35
+ *       400:
+ *         description: Bad Request (missing project_id, invalid limit or year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/matrix/productivity', validateQuery(getProductivityMatrixSchema), fetchProductivityMatrix);
 
 /**
  * @openapi

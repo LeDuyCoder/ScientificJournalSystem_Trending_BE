@@ -1,8 +1,6 @@
 /**
  * Express controller for analytics endpoints.
  */
-
-import { z } from 'zod';
 import logger from '../../utils/logger.js';
 import { getTopEntities } from '../services/analytics.service.js';
 import { getPublicationTrends } from '../services/trends.service.js';
@@ -11,9 +9,12 @@ import { getDistribution } from '../services/distribution.service.js';
 import { getForecastInsights } from '../services/forecast.service.js';
 import { getGeoDistribution } from '../services/geoDistribution.service.js';
 import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
+import { getCollaborationNetwork } from '../services/network.service.js';
 import { getJournalQuartileDistribution } from '../services/journal-quartile.service.js';
 import { getJournalRanking } from '../services/journal-ranking.service.js';
 import { getTopicIntensityMatrix } from '../services/matrix.service.js';
+import { getInfluentialRankings } from '../services/rankings.service.js';
+import { getProductivityMatrix } from '../services/productivityMatrix.service.js';
 
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
@@ -40,7 +41,8 @@ const getTopEntitiesSchema = z.object({
  */
 export async function fetchTrends(req, res, next) {
   try {
-    const data = await getPublicationTrends();
+    // Dữ liệu đã được validate và chuẩn hóa bởi middleware
+    const data = await getPublicationTrends(req.validatedQuery);
 
     res.json({
       code: 200,
@@ -62,29 +64,14 @@ export async function fetchTrends(req, res, next) {
  */
 export async function fetchJournalQuartileDistribution(req, res, next) {
   try {
-    const { project_id, subject_area, keywords, from_year, to_year } = req.query;
-
-    if (!project_id) {
-      return res.status(400).json({ code: 400, message: 'project_id is required', data: null });
-    }
-
-    const fromYear = from_year ? parseInt(from_year, 10) : undefined;
-    const toYear = to_year ? parseInt(to_year, 10) : undefined;
-
-    if ((fromYear && isNaN(fromYear)) || (toYear && isNaN(toYear))) {
-      return res.status(400).json({ code: 400, message: 'from_year and to_year must be numbers', data: null });
-    }
-
-    if (fromYear && toYear && fromYear > toYear) {
-      return res.status(400).json({ code: 400, message: 'Invalid year range', data: null });
-    }
+    const { project_id, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const data = await getJournalQuartileDistribution({
       projectId: String(project_id),
       subjectArea: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear,
-      toYear,
+      fromYear: from_year,
+      toYear: to_year,
     });
 
     res.status(200).json({ code: 200, message: 'Fetch quartile distribution successfully', data });
@@ -106,35 +93,15 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
  */
 export async function fetchJournalRanking(req, res, next) {
   try {
-    const { project_id, subject_area, keywords, from_year, to_year, limit } = req.query;
-
-    if (!project_id) {
-      return res.status(400).json({ code: 400, message: 'project_id is required', data: null });
-    }
-
-    const fromYear = from_year ? parseInt(from_year, 10) : undefined;
-    const toYear = to_year ? parseInt(to_year, 10) : undefined;
-    const parsedLimit = limit !== undefined ? parseInt(limit, 10) : 5;
-
-    if ((fromYear && isNaN(fromYear)) || (toYear && isNaN(toYear))) {
-      return res.status(400).json({ code: 400, message: 'from_year and to_year must be numbers', data: null });
-    }
-
-    if (fromYear && toYear && fromYear > toYear) {
-      return res.status(400).json({ code: 400, message: 'Invalid year range', data: null });
-    }
-
-    if (isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 50) {
-      return res.status(400).json({ code: 400, message: 'limit must be a positive integer between 1 and 50', data: null });
-    }
+    const { project_id, subject_area, keywords, from_year, to_year, limit } = req.validatedQuery;
 
     const data = await getJournalRanking({
       projectId: String(project_id),
       subjectArea: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear,
-      toYear,
-      limit: parsedLimit,
+      fromYear: from_year,
+      toYear: to_year,
+      limit: limit,
     });
 
     res.status(200).json({ code: 200, message: 'Fetch journal rankings successfully', data });
@@ -153,23 +120,15 @@ export async function fetchJournalRanking(req, res, next) {
  */
 export async function getTopEntitiesHandler(req, res, next) {
   try {
-    const query = getTopEntitiesSchema.parse(req.query);
-
-    if (query.from_year && query.to_year && query.from_year > query.to_year) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range: from_year cannot be greater than to_year',
-      });
-    }
+    const query = req.validatedQuery;
 
     const filters = {
       projectId: query.project_id,
       entityType: query.entity_type,
       fromYear: query.from_year,
       toYear: query.to_year,
-      limit: query.limit,
+      limit: query.limit
     };
-
     const data = await getTopEntities(filters);
 
     res.status(200).json({
@@ -183,24 +142,6 @@ export async function getTopEntitiesHandler(req, res, next) {
   }
 }
 
-/**
- * Hàm hỗ trợ phân tích query parameter thành mảng các chuỗi/số sạch.
- * @param {any} val - Giá trị query parameter.
- * @returns {Array<string|number>}
- */
-function parseFilterArray(val) {
-  if (!val) return [];
-  const raw = Array.isArray(val)
-    ? val
-    : String(val).split(',').map(v => v.trim());
-  
-  return raw
-    .map(v => {
-      const num = Number(v);
-      return !Number.isNaN(num) && String(num) === String(v) ? num : v;
-    })
-    .filter(v => v !== '');
-}
 
 /**
  * Return frontier technology topics based on Impact vs Velocity.
@@ -217,11 +158,7 @@ function parseFilterArray(val) {
  */
 export async function fetchFrontier(req, res, next) {
   try {
-    const filters = {
-      subjectArea: req.query.subjectArea ? String(req.query.subjectArea).trim() : '',
-      keywords: parseFilterArray(req.query.keywords || req.query.keyword || req.query.keywordIds || req.query.keywordId),
-    };
-
+    const filters = req.validatedQuery;
     const data = await getFrontierTopics(filters);
 
     res.json({
@@ -246,32 +183,16 @@ export async function fetchFrontier(req, res, next) {
  */
 export async function fetchDistribution(req, res, next) {
   try {
-    const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = req.query;
-
-    if (distribution_type && !['sector', 'impact_quartile'].includes(distribution_type)) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid distribution type',
-        data: null
-      });
-    }
+    const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const options = {
-      project_id: String(project_id).trim(),
-      distribution_type: distribution_type ? String(distribution_type).trim() : 'sector',
-      subject_area: subject_area ? String(subject_area).trim() : undefined,
-      keywords: parseFilterArray(keywords),
-      from_year: from_year ? Number(from_year) : undefined,
-      to_year: to_year ? Number(to_year) : undefined,
+      project_id,
+      distribution_type,
+      subject_area,
+      keywords,
+      from_year,
+      to_year,
     };
-
-    if (options.from_year && options.to_year && options.from_year > options.to_year) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range',
-        data: null
-      });
-    }
 
     const data = await getDistribution(options);
 
@@ -304,16 +225,9 @@ export async function fetchDistribution(req, res, next) {
  */
 export async function fetchForecast(req, res, next) {
   try {
-    const projectId = req.query.project_id;
+    const { project_id: projectId } = req.validatedQuery;
 
-    if (!projectId) {
-      return res.status(400).json({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
+    // Service sẽ xử lý lỗi 404 nếu không tìm thấy project
     const data = await getForecastInsights(projectId);
 
     return res.json({
@@ -346,32 +260,13 @@ export async function fetchForecast(req, res, next) {
  */
 export async function fetchGeoDistribution(req, res, next) {
   try {
-    const projectId = req.query.project_id;
-
-    if (!projectId) {
-      return res.status(400).json({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
-    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
-    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
-
-    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range',
-        data: null,
-      });
-    }
+    const { project_id: projectId, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const filters = {
-      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
-      keywords: req.query.keywords || req.query.keyword,
-      fromYear,
-      toYear,
+      subjectArea: subject_area,
+      keywords: keywords,
+      fromYear: from_year,
+      toYear: to_year,
     };
 
     const data = await getGeoDistribution(projectId, filters);
@@ -406,32 +301,13 @@ export async function fetchGeoDistribution(req, res, next) {
  */
 export async function fetchImpactQuartiles(req, res, next) {
   try {
-    const projectId = req.query.project_id;
-
-    if (!projectId) {
-      return res.status(400).json({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
-    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
-    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
-
-    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
-      return res.status(400).json({
-        code: 400,
-        message: 'Invalid year range',
-        data: null,
-      });
-    }
+    const { project_id: projectId, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const filters = {
-      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
-      keywords: req.query.keywords || req.query.keyword,
-      fromYear,
-      toYear,
+      subjectArea: subject_area,
+      keywords: keywords,
+      fromYear: from_year,
+      toYear: to_year,
     };
 
     const data = await getImpactQuartiles(projectId, filters);
@@ -455,6 +331,7 @@ export async function fetchImpactQuartiles(req, res, next) {
 }
 
 /**
+/**
  * Fetch Topic Intensity Matrix
  *
  * Route: GET /analytics/matrix/intensity
@@ -472,6 +349,131 @@ export async function fetchTopicIntensityMatrix(req, res, next) {
   } catch (err) {
     const statusCode = err.status || err.code;
     if (statusCode && Number.isInteger(statusCode) && statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Fetch Global Collaboration Network
+ *
+ * Route: GET /analytics/network/collaboration
+ */
+export async function fetchCollaborationNetwork(req, res, next) {
+  try {
+    const data = await getCollaborationNetwork(req.validatedQuery);
+
+    res.json({
+      code: 200,
+      message: 'Fetch global collaboration network successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.status || err.code;
+    if (statusCode && Number.isInteger(statusCode) && statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Return influential rankings (authors and institutions) for a project.
+ *
+ * Route: GET /analytics/rankings
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchRankings(req, res, next) {
+  try {
+    const {
+      project_id: projectId,
+      subject_area,
+      keywords,
+      from_year,
+      to_year,
+      limit
+    } = req.validatedQuery;
+
+    const filters = {
+      subjectArea: subject_area,
+      keywords: keywords,
+      fromYear: from_year,
+      toYear: to_year,
+      limit,
+    };
+
+    const data = await getInfluentialRankings(projectId, filters);
+
+    return res.json({
+      code: 200,
+      message: 'Fetch influential rankings successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Return coordinates for the Author Productivity vs Impact Matrix chart.
+ *
+ * Route: GET /analytics/matrix/productivity
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchProductivityMatrix(req, res, next) {
+  try {
+    const {
+      project_id: projectId,
+      subject_area,
+      keywords,
+      from_year,
+      to_year,
+      limit
+    } = req.validatedQuery;
+
+    const filters = {
+      subjectArea: subject_area,
+      keywords: keywords,
+      fromYear: from_year,
+      toYear: to_year,
+      limit,
+    };
+
+    const data = await getProductivityMatrix(projectId, filters);
+
+    return res.json({
+      code: 200,
+      message: 'Fetch matrix points successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
       return res.status(statusCode).json({
         code: statusCode,
         message: err.message,

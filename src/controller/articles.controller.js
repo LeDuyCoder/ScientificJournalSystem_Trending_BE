@@ -19,23 +19,10 @@ import { searchArticlesByKeyword } from '../services/graph.service.js';
  */
 export async function searchArticles(req, res, next) {
   try {
-    const rawKeyword = req.query.keyword;
-
-    const keyword = rawKeyword
-      ? decodeURIComponent(String(rawKeyword)).trim()
-      : '';
-
-    const limitRaw = req.query.limit;
-
-    if (!keyword || typeof keyword !== 'string') {
-      res.status(400).json({ message: 'Missing query param: keyword' });
-      return;
-    }
-
-    const limit = limitRaw ? Number(limitRaw) : undefined;
+    const { keyword, limit } = req.validatedQuery;
 
     const data = await searchArticlesByKeyword(keyword, {
-      limit: Number.isFinite(limit) ? limit : undefined,
+      limit: limit,
     });
 
     res.json({
@@ -46,7 +33,3 @@ export async function searchArticles(req, res, next) {
     next(err);
   }
 }
-
-
-
-
