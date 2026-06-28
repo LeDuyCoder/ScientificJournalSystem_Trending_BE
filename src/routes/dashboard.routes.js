@@ -1,5 +1,5 @@
 import express from 'express';
-import { getDashboardStatsHandler } from '../controller/dashboard.controller.js';
+import { getDashboardStatsHandler, getDashboardFiltersHandler } from '../controller/dashboard.controller.js';
 import { validateGetDashboardStats } from '../middlewares/dashboard.validator.js';
 
 // Khởi tạo router của Express cho các endpoint liên quan đến dashboard
@@ -60,5 +60,59 @@ const router = express.Router();
  *                   type: string
  *                   example: Internal Server Error
  */router.get('/stats', validateGetDashboardStats, getDashboardStatsHandler);
+
+/**
+ * @openapi
+ * /dashboard/filters:
+ *   get:
+ *     summary: Fetch filter configurations for dashboard screens
+ *     description: Returns dynamic and static dropdown filter configurations (Timeframe, Domain, Region) for use across analytics screens.
+ *     tags:
+ *       - Dashboard
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         description: Optional project ID to filter options by project scope
+ *       - in: query
+ *         name: screen
+ *         schema:
+ *           type: string
+ *         description: Optional screen name to return specific filters
+ *     responses:
+ *       200:
+ *         description: Fetch filter configurations successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch filter configurations successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     timeframes:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["Last 5 Years", "Last 10 Years", "All Time"]
+ *                     domains:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["Biological Sciences", "Computer Science", "Physical Sciences"]
+ *                     regions:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["Global Distribution", "North America", "Asia Pacific", "Europe", "Middle East & Africa", "Latin America"]
+ */
+router.get('/filters', getDashboardFiltersHandler);
 
 export default router;

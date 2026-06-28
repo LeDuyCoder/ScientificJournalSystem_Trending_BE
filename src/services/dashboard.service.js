@@ -410,3 +410,70 @@ export async function getDashboardStats(filters = {}) {
  * @property {DensityMetric} densityIndex
  * @property {StatMetric} totalRelocated
  */
+
+/**
+ * Lấy cấu hình các bộ lọc động cho dashboard (Timeframe, Domain, Region).
+ *
+ * @param {Object} [options] - Optional query params (project_id, screen, include_counts)
+ * @returns {Promise<Object>}
+ */
+export async function getDashboardFilters(options = {}) {
+    const timeframes = [
+        "Last 5 Years",
+        "Last 10 Years",
+        "All Time"
+    ];
+
+    const regions = [
+        "Global Distribution",
+        "North America",
+        "Asia Pacific",
+        "Europe",
+        "Middle East & Africa",
+        "Latin America"
+    ];
+
+    let domains = [];
+    const fallbackDomains = [
+        "Biological Sciences",
+        "Computer Science",
+        "Physical Sciences"
+    ];
+
+    const pgClient = await pool.connect();
+    try {
+        let query = `
+            SELECT DISTINCT display_name
+            FROM "Subject_Area"
+            WHERE COALESCE(is_deleted, false) = false
+              AND display_name IS NOT NULL
+              AND trim(display_name) != ''
+        `;
+        const queryParams = [];
+
+        if (options.project_id) {
+            query += ` AND subject_area_id = (SELECT subject_area FROM "Project" WHERE project_id = $1) `;
+            queryParams.push(options.project_id);
+        }
+
+        query += ` ORDER BY display_name ASC`;
+
+        const res = await pgClient.query(query, queryParams);
+        if (res.rows.length > 0) {
+            domains = res.rows.map(row => row.display_name);
+        } else {
+            domains = fallbackDomains;
+        }
+    } catch (err) {
+        console.error('[Dashboard Service] Error fetching dynamic domains:', err.message);
+        domains = fallbackDomains;
+    } finally {
+        pgClient.release();
+    }
+
+    return {
+        timeframes,
+        domains,
+        regions
+    };
+}
