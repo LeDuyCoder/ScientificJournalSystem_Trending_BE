@@ -1,5 +1,6 @@
 import express from 'express';
 import { getDashboardStatsHandler } from '../controller/dashboard.controller.js';
+import { validateGetDashboardStats } from '../middlewares/dashboard.validator.js';
 
 // Khởi tạo router của Express cho các endpoint liên quan đến dashboard
 const router = express.Router();
@@ -58,7 +59,6 @@ const router = express.Router();
  *                 message:
  *                   type: string
  *                   example: Internal Server Error
- */
-router.get('/stats', getDashboardStatsHandler);
+ */router.get('/stats', validateGetDashboardStats, getDashboardStatsHandler);
 
 export default router;

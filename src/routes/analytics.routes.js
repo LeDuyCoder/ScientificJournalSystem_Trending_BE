@@ -1,6 +1,20 @@
 import express from 'express';
 
 import {
+  validateQuery
+} from '../middlewares/analytics.validator.js';
+import {
+  getTrendsSchema,
+  getFrontierSchema,
+  getDistributionSchema,
+  getForecastSchema,
+  getTopEntitiesSchema,
+  getGeoDistributionSchema,
+  getJournalQuartileSchema,
+  getJournalRankingSchema,
+  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema
+} from '../middlewares/analytics.validator.js';
+import {
   fetchTrends,
   fetchFrontier,
   fetchDistribution,
@@ -8,7 +22,6 @@ import {
   getTopEntitiesHandler,
   fetchGeoDistribution,
   fetchImpactQuartiles,
-  fetchCollaborationNetwork,
   fetchJournalQuartileDistribution,
   fetchJournalRanking,
   fetchRankings,
@@ -16,6 +29,7 @@ import {
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
+import { fetchCollaborationNetwork } from '../controller/analytics.controller.js';
 
 /**
  * Get publication & citation historical trends for chart rendering.
@@ -29,10 +43,8 @@ const router = express.Router();
  *     parameters:
  *       - in: query
  *         name: project_id
- *         schema:
- *           type: string
- *         required: true
- *         description: 'ID của project để xác định phạm vi phân tích.'
+ *         schema: { type: string }
+ *         description: 'ID của project để xác định phạm vi phân tích. Nếu không có, sẽ lấy dữ liệu toàn cục.'
  *       - in: query
  *         name: subject_area
  *         schema:
@@ -87,9 +99,9 @@ const router = express.Router();
  *                             type: array
  *                             items:
  *                               type: integer
- *                             example: [12000, 15000, 18500, 22000, 28000, 32950]
+ *                             example: [120, 150, 185, 220, 280, 329]
  */
-router.get('/trends', fetchTrends);
+router.get('/trends', validateQuery(getTrendsSchema), fetchTrends);
 
 /**
  * Get emerging and frontier tech topics based on Impact vs Velocity.
@@ -161,8 +173,7 @@ router.get('/trends', fetchTrends);
  *                 message:
  *                   type: string
  *                   example: Internal Server Error
- */
-router.get('/frontier', fetchFrontier);
+ */router.get('/frontier', validateQuery(getFrontierSchema), fetchFrontier);
 
 /**
  * Get research landscape and impact quartile distribution.
@@ -212,7 +223,7 @@ router.get('/frontier', fetchFrontier);
  *         description: Distribution data returned successfully
  *         content:
  *           application/json:
- *             schema:
+ *             schema: 
  *               type: object
  *               properties:
  *                 code:
@@ -237,7 +248,7 @@ router.get('/frontier', fetchFrontier);
  *       404:
  *         description: Project not found
  */
-router.get('/distribution', fetchDistribution);
+router.get('/distribution', validateQuery(getDistributionSchema), fetchDistribution);
 
 /**
  * @openapi
@@ -320,7 +331,7 @@ router.get('/distribution', fetchDistribution);
  *                   nullable: true
  *                   example: null
  */
-router.get('/forecast', fetchForecast);
+router.get('/forecast', validateQuery(getForecastSchema), fetchForecast);
 
 /**
  * @openapi
@@ -386,8 +397,7 @@ router.get('/forecast', fetchForecast);
  *                       score:
  *                         type: number
  *                         example: 94.2
- */
-router.get('/top-entities', getTopEntitiesHandler);
+ */router.get('/top-entities', validateQuery(getTopEntitiesSchema), getTopEntitiesHandler);
 
 /**
  * @openapi
@@ -458,7 +468,7 @@ router.get('/top-entities', getTopEntitiesHandler);
  *       404:
  *         description: Project not found
  */
-router.get('/geo-distribution', fetchGeoDistribution);
+router.get('/geo-distribution', validateQuery(getGeoDistributionSchema), fetchGeoDistribution);
 
 /**
  * @openapi
@@ -526,8 +536,7 @@ router.get('/geo-distribution', fetchGeoDistribution);
  *                           percentage:
  *                             type: number
  *                             example: 42
- */
-router.get('/journals/quartiles', fetchJournalQuartileDistribution);
+ */router.get('/journals/quartiles', validateQuery(getJournalQuartileSchema), fetchJournalQuartileDistribution);
 
 /**
  * @openapi
@@ -593,7 +602,7 @@ router.get('/journals/quartiles', fetchJournalQuartileDistribution);
  *                       impactFactor:
  *                         type: number
  */
-router.get('/journals/ranking', fetchJournalRanking);
+router.get('/journals/ranking', validateQuery(getJournalRankingSchema), fetchJournalRanking);
 
 /**
  * @openapi
@@ -650,7 +659,7 @@ router.get('/journals/ranking', fetchJournalRanking);
  *       404:
  *         description: Project not found
  */
-router.get('/network/collaboration', fetchCollaborationNetwork);
+router.get('/network/collaboration', validateQuery(getCollaborationNetworkSchema), fetchCollaborationNetwork);
 
 /**
  * @openapi
@@ -749,7 +758,7 @@ router.get('/network/collaboration', fetchCollaborationNetwork);
  *       404:
  *         description: Project not found
  */
-router.get('/rankings', fetchRankings);
+router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
 
 /**
  * @openapi
@@ -825,6 +834,6 @@ router.get('/rankings', fetchRankings);
  *       404:
  *         description: Project not found
  */
-router.get('/matrix/productivity', fetchProductivityMatrix);
+router.get('/matrix/productivity', validateQuery(getProductivityMatrixSchema), fetchProductivityMatrix);
 
 export default router;
