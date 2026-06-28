@@ -1,6 +1,7 @@
 import express from 'express';
 import { getDashboardStatsHandler } from '../controller/dashboard.controller.js';
 import { validateGetDashboardStats } from '../middlewares/dashboard.validator.js';
+import { fetchDashboardSearch } from '../controller/analytics.controller.js';
 
 // Khởi tạo router của Express cho các endpoint liên quan đến dashboard
 const router = express.Router();
@@ -60,5 +61,67 @@ const router = express.Router();
  *                   type: string
  *                   example: Internal Server Error
  */router.get('/stats', validateGetDashboardStats, getDashboardStatsHandler);
+
+/**
+ * @openapi
+ * /dashboard/search:
+ *   get:
+ *     summary: Get autocomplete search suggestions for the dashboard header input
+ *     description: Returns a list of unique suggestion strings matching the query text in articles, journals, authors, institutions, keywords, and topics.
+ *     tags:
+ *       - Dashboard
+ *     parameters:
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The search query text (minimum 2 characters).
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           default: all
+ *           enum: [all, article, journal, author, institution, keyword, topic]
+ *         description: Filter suggestions by specific entity type.
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         description: Optional project ID to limit search suggestions to project scope.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 8
+ *         description: Maximum number of suggestions to return (1-20).
+ *     responses:
+ *       200:
+ *         description: Suggestions fetched successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Search suggestions fetched successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     suggestions:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                         example: "Machine Learning in Bio-engineering"
+ *       400:
+ *         description: Bad Request (invalid limit or search type)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/search', fetchDashboardSearch);
 
 export default router;
