@@ -15,6 +15,7 @@ import { getJournalRanking } from '../services/journal-ranking.service.js';
 import { getInfluentialRankings } from '../services/rankings.service.js';
 import { getProductivityMatrix } from '../services/productivityMatrix.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
+import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -534,6 +535,80 @@ export async function fetchKeywordVectors(req, res, next) {
       code: 200,
       message: 'Fetch trend vectors successfully',
       data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Return search suggestions for dashboard search input.
+ *
+ * Route: GET /dashboard/search
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchDashboardSearch(req, res, next) {
+  try {
+    const q = req.query.q !== undefined ? String(req.query.q) : '';
+    const qClean = q.trim();
+
+    // 1. If q is missing or too short, return 200 with empty suggestions array
+    if (!q || qClean.length < 2) {
+      return res.json({
+        code: 200,
+        message: 'Search suggestions fetched successfully',
+        data: {
+          suggestions: [],
+        },
+      });
+    }
+
+    const type = req.query.type ? String(req.query.type).toLowerCase().trim() : 'all';
+    const allowedTypes = ['all', 'article', 'journal', 'author', 'institution', 'keyword', 'topic'];
+
+    if (!allowedTypes.includes(type)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid search type',
+        data: null,
+      });
+    }
+
+    let limit = 8;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid limit',
+          data: null,
+        });
+      }
+      limit = parsedLimit > 20 ? 20 : parsedLimit;
+    }
+
+    const projectId = req.query.project_id ? req.query.project_id : null;
+
+    const suggestions = await getDashboardSearchSuggestions(qClean, type, projectId, limit);
+
+    return res.json({
+      code: 200,
+      message: 'Search suggestions fetched successfully',
+      data: {
+        suggestions,
+      },
     });
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
