@@ -2,6 +2,7 @@
  * Express controller for analytics endpoints.
  */
 import logger from '../../utils/logger.js';
+import { z } from 'zod';
 import { getTopEntities } from '../services/analytics.service.js';
 import { getPublicationTrends } from '../services/trends.service.js';
 import { getFrontierTopics } from '../services/frontier.service.js';
