@@ -9,10 +9,10 @@ import {
   getDistributionSchema,
   getForecastSchema,
   getTopEntitiesSchema,
-  getGeoDistributionSchema,
+  getGeoDistributionSchema, getCountryCollaborationChordSchema,
   getJournalQuartileSchema,
   getJournalRankingSchema,
-  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema
+  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -23,10 +23,13 @@ import {
   fetchGeoDistribution,
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking,
+  fetchJournalRanking, 
+  fetchCountryCollaborationChord,
   fetchTopicIntensityMatrix,
   fetchRankings,
   fetchProductivityMatrix,
+  fetchJournalMigration,
+  fetchKeywordVectors,
   fetchCollaborationNetwork
 } from '../controller/analytics.controller.js';
 
@@ -836,6 +839,168 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *         description: Project not found
  */
 router.get('/matrix/productivity', validateQuery(getProductivityMatrixSchema), fetchProductivityMatrix);
+
+/**
+ * @openapi
+ * /analytics/network/chord:
+ *   get:
+ *     summary: Get country collaboration chord data
+ *     description: Returns data for rendering a chord diagram of research collaboration between countries, based on co-authored articles within a project's scope.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema: { type: string }
+ *         required: true
+ *         description: The ID of the project to get the country collaboration chord for.
+ *       - in: query
+ *         name: subject_area
+ *         schema: { type: string }
+ *         description: Further filter by a specific subject area name.
+ *       - in: query
+ *         name: keywords
+ *         schema: { type: string }
+ *         description: Comma-separated list of keywords to filter by (e.g., "AI,Machine Learning").
+ *       - in: query
+ *         name: from_year
+ *         schema: { type: integer }
+ *         description: The starting publication year for filtering articles.
+ *       - in: query
+ *         name: to_year
+ *         schema: { type: integer }
+ *         description: The ending publication year for filtering articles.
+ *       - in: query
+ *         name: limit_countries
+ *         schema: { type: integer, default: 10, maximum: 30 }
+ *         description: Maximum number of top collaborating countries to include.
+ *       - in: query
+ *         name: min_value
+ *         schema: { type: integer, default: 1 }
+ *         description: Minimum co-authorship value for a pair to be included.
+ *     responses:
+ *       200:
+ *         description: Collaboration chord data returned successfully.
+ *       400:
+ *         description: Bad Request (e.g., missing project_id, invalid year range or limits).
+ *       404:
+ *         description: Project not found.
+ */
+router.get('/network/chord', validateQuery(getCountryCollaborationChordSchema), fetchCountryCollaborationChord);
+
+/**
+ * @openapi
+ * /analytics/journals/migration:
+ *   get:
+ *     summary: Get journal migration analysis
+ *     description: Returns flow of journal access model migration between two given years.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *       - in: query
+ *         name: include_legacy
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Migration analysis returned successfully.
+ */
+router.get('/journals/migration', validateQuery(getJournalMigrationSchema), fetchJournalMigration);
+
+/**
+ * @openapi
+ * /analytics/keywords/vectors:
+ *   get:
+ *     summary: Get keyword trend growth and volume vectors
+ *     description: Returns a list of keywords with their total volume (articles count) in the current period and growth rate compared to the previous period.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Optional subject area filter.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: window_months
+ *         schema:
+ *           type: integer
+ *           default: 12
+ *         description: Analytical time window in months (1-36).
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Maximum number of keyword vectors to return.
+ *     responses:
+ *       200:
+ *         description: Keyword vectors returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch trend vectors successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       keyword:
+ *                         type: string
+ *                         example: "LLM Bias"
+ *                       volume:
+ *                         type: integer
+ *                         example: 4200
+ *                       growth:
+ *                         type: number
+ *                         example: 12.4
+ *       400:
+ *         description: Bad Request (missing project_id, invalid limit, window_months or year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/keywords/vectors', fetchKeywordVectors);
 
 /**
  * @openapi

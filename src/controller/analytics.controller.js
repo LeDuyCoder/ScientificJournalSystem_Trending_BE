@@ -3,19 +3,23 @@
  */
 import logger from '../../utils/logger.js';
 import { z } from 'zod';
-import { getTopEntities } from '../services/analytics.service.js';
-import { getPublicationTrends } from '../services/trends.service.js';
-import { getFrontierTopics } from '../services/frontier.service.js';
-import { getDistribution } from '../services/distribution.service.js';
-import { getForecastInsights } from '../services/forecast.service.js';
-import { getGeoDistribution } from '../services/geoDistribution.service.js';
+import { getTopEntities } from "../services/analytics.service.js";
+import { getPublicationTrends } from "../services/trends.service.js";
+import { getFrontierTopics } from "../services/frontier.service.js";
+import { getDistribution } from "../services/distribution.service.js";
+import { getForecastInsights } from "../services/forecast.service.js";
+import { getGeoDistribution } from "../services/geoDistribution.service.js";
 import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
 import { getCollaborationNetwork } from '../services/network.service.js';
-import { getJournalQuartileDistribution } from '../services/journal-quartile.service.js';
-import { getJournalRanking } from '../services/journal-ranking.service.js';
+import { getJournalQuartileDistribution } from "../services/journal-quartile.service.js";
+import { getJournalRanking } from "../services/journal-ranking.service.js";
 import { getTopicIntensityMatrix } from '../services/matrix.service.js';
-import { getInfluentialRankings } from '../services/rankings.service.js';
-import { getProductivityMatrix } from '../services/productivityMatrix.service.js';
+import { getInfluentialRankings } from "../services/rankings.service.js";
+import { getProductivityMatrix } from "../services/productivityMatrix.service.js";
+import { getCountryCollaborationChord } from "../services/countryCollaboration.service.js";
+import { getJournalMigrationAnalysis } from '../services/migration.service.js';
+import { getKeywordVectors } from '../services/keywordVectors.service.js';
+import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
@@ -47,7 +51,7 @@ export async function fetchTrends(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch publication trends successfully',
+      message: "Fetch publication trends successfully",
       data,
     });
   } catch (err) {
@@ -75,7 +79,11 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
       toYear: to_year,
     });
 
-    res.status(200).json({ code: 200, message: 'Fetch quartile distribution successfully', data });
+    res.status(200).json({
+      code: 200,
+      message: "Fetch quartile distribution successfully",
+      data,
+    });
   } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
@@ -105,7 +113,11 @@ export async function fetchJournalRanking(req, res, next) {
       limit: limit,
     });
 
-    res.status(200).json({ code: 200, message: 'Fetch journal rankings successfully', data });
+    res.status(200).json({
+      code: 200,
+      message: "Fetch journal rankings successfully",
+      data,
+    });
   } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
@@ -134,15 +146,14 @@ export async function getTopEntitiesHandler(req, res, next) {
 
     res.status(200).json({
       code: 200,
-      message: 'Fetch top entities successfully',
+      message: "Fetch top entities successfully",
       data,
     });
   } catch (error) {
-    logger.error('Error in getTopEntitiesHandler:', error);
+    logger.error("Error in getTopEntitiesHandler:", error);
     next(error);
   }
 }
-
 
 /**
  * Return frontier technology topics based on Impact vs Velocity.
@@ -164,7 +175,7 @@ export async function fetchFrontier(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch frontier topics successfully',
+      message: "Fetch frontier topics successfully",
       data,
     });
   } catch (err) {
@@ -199,15 +210,15 @@ export async function fetchDistribution(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch distribution successfully',
+      message: "Fetch distribution successfully",
       data,
     });
-  } catch (err) {
-    if (err.status === 404) {
+  } catch (error) {
+    if (error.status === 404 || error.code === 404) {
       return res.status(404).json({
         code: 404,
-        message: err.message,
-        data: null
+        message: error.message,
+        data: null,
       });
     }
     next(err);
@@ -233,7 +244,7 @@ export async function fetchForecast(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch forecast insights successfully',
+      message: "Fetch forecast insights successfully",
       data,
     });
   } catch (err) {
@@ -274,7 +285,7 @@ export async function fetchGeoDistribution(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch geographical metrics successfully',
+      message: "Fetch geographical metrics successfully",
       data,
     });
   } catch (err) {
@@ -315,7 +326,7 @@ export async function fetchImpactQuartiles(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch impact quartile summary successfully',
+      message: "Fetch impact quartile summary successfully",
       data,
     });
   } catch (err) {
@@ -371,7 +382,7 @@ export async function fetchCollaborationNetwork(req, res, next) {
 
     res.json({
       code: 200,
-      message: 'Fetch global collaboration network successfully',
+      message: "Fetch global collaboration network successfully",
       data,
     });
   } catch (err) {
@@ -420,7 +431,7 @@ export async function fetchRankings(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch influential rankings successfully',
+      message: "Fetch influential rankings successfully",
       data,
     });
   } catch (err) {
@@ -469,8 +480,233 @@ export async function fetchProductivityMatrix(req, res, next) {
 
     return res.json({
       code: 200,
-      message: 'Fetch matrix points successfully',
+      message: "Fetch matrix points successfully",
       data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Handle GET /analytics/journals/migration
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+export async function fetchJournalMigration(req, res, next) {
+  try {
+    const result = await getJournalMigrationAnalysis(req.validatedQuery);
+    return res.status(200).json({
+      code: 200,
+      message: "Fetch migration analysis successfully",
+      data: result
+    });
+  } catch (err) {
+    if (err.status === 404 || err.code === 404) {
+      return res.status(404).json({
+        code: 404,
+        message: 'Project not found',
+        data: null
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Handler để lấy dữ liệu Country Collaboration Chord.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+export async function fetchCountryCollaborationChord(req, res, next) {
+  try {
+    const data = await getCountryCollaborationChord(req.validatedQuery);
+    res.status(200).json({
+      code: 200,
+      message: "Fetch collaboration chord successfully",
+      data: data,
+    });
+  } catch (error) {
+    if (error.status === 404) {
+      return res.status(404).json({ code: 404, message: error.message, data: null });
+    }
+    next(error);
+  }
+}
+
+/**
+ * Return keyword growth and volume trend vectors for a project.
+ *
+ * Route: GET /analytics/keywords/vectors
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchKeywordVectors(req, res, next) {
+  try {
+    const projectId = req.query.project_id;
+
+    if (!projectId) {
+      return res.status(400).json({
+        code: 400,
+        message: 'project_id is required',
+        data: null,
+      });
+    }
+
+    const fromYear = req.query.from_year ? Number(req.query.from_year) : undefined;
+    const toYear = req.query.to_year ? Number(req.query.to_year) : undefined;
+
+    if (fromYear !== undefined && Number.isNaN(fromYear)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid from_year parameter',
+        data: null,
+      });
+    }
+    if (toYear !== undefined && Number.isNaN(toYear)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid to_year parameter',
+        data: null,
+      });
+    }
+
+    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid year range',
+        data: null,
+      });
+    }
+
+    let windowMonths = 12;
+    if (req.query.window_months !== undefined) {
+      const parsedWindow = Number(req.query.window_months);
+      if (Number.isNaN(parsedWindow) || parsedWindow <= 0 || parsedWindow > 36) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid window_months',
+          data: null,
+        });
+      }
+      windowMonths = parsedWindow;
+    }
+
+    let limit = 10;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid limit',
+          data: null,
+        });
+      }
+      limit = parsedLimit > 50 ? 50 : parsedLimit;
+    }
+
+    const filters = {
+      subjectArea: req.query.subject_area ? String(req.query.subject_area).trim() : undefined,
+      keywords: req.query.keywords || req.query.keyword,
+      fromYear,
+      toYear,
+      windowMonths,
+      limit,
+    };
+
+    const data = await getKeywordVectors(projectId, filters);
+
+    return res.json({
+      code: 200,
+      message: 'Fetch trend vectors successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
+    if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+ * Return search suggestions for dashboard search input.
+ *
+ * Route: GET /dashboard/search
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
+export async function fetchDashboardSearch(req, res, next) {
+  try {
+    const q = req.query.q !== undefined ? String(req.query.q) : '';
+    const qClean = q.trim();
+
+    // 1. If q is missing or too short, return 200 with empty suggestions array
+    if (!q || qClean.length < 2) {
+      return res.json({
+        code: 200,
+        message: 'Search suggestions fetched successfully',
+        data: {
+          suggestions: [],
+        },
+      });
+    }
+
+    const type = req.query.type ? String(req.query.type).toLowerCase().trim() : 'all';
+    const allowedTypes = ['all', 'article', 'journal', 'author', 'institution', 'keyword', 'topic'];
+
+    if (!allowedTypes.includes(type)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid search type',
+        data: null,
+      });
+    }
+
+    let limit = 8;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
+        return res.status(400).json({
+          code: 400,
+          message: 'Invalid limit',
+          data: null,
+        });
+      }
+      limit = parsedLimit > 20 ? 20 : parsedLimit;
+    }
+
+    const projectId = req.query.project_id ? req.query.project_id : null;
+
+    const suggestions = await getDashboardSearchSuggestions(qClean, type, projectId, limit);
+
+    return res.json({
+      code: 200,
+      message: 'Search suggestions fetched successfully',
+      data: {
+        suggestions,
+      },
     });
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;

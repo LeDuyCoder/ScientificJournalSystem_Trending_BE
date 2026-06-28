@@ -144,3 +144,22 @@ export const getProductivityMatrixSchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/network/chord
+export const getCountryCollaborationChordSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  limit_countries: z.coerce.number().int().positive().max(30).default(10),
+  min_value: z.coerce.number().int().positive().default(1),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/journals/migration
+export const getJournalMigrationSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  include_legacy: z.preprocess((val) => {
+    if (val === undefined) return true;
+    if (typeof val === 'string') return val === 'true';
+    return Boolean(val);
+  }, z.boolean()),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
