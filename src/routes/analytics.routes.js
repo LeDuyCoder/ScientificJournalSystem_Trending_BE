@@ -8,7 +8,9 @@ import {
   getTopEntitiesHandler,
   fetchGeoDistribution,
   fetchImpactQuartiles,
+  fetchCollaborationNetwork,
   fetchJournalQuartileDistribution,
+  fetchJournalRanking
   fetchRankings
 } from '../controller/analytics.controller.js';
 
@@ -23,6 +25,33 @@ const router = express.Router();
  *     summary: Get publication & citation historical trends
  *     tags:
  *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: 'ID của project để xác định phạm vi phân tích.'
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo subject area cụ thể.'
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: 'Lọc hẹp thêm theo danh sách keyword ngăn cách bởi dấu phẩy.'
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm bắt đầu lọc dữ liệu.'
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: 'Năm kết thúc lọc dữ liệu.'
  *     responses:
  *       200:
  *         description: Trend data returned successfully
@@ -498,6 +527,129 @@ router.get('/geo-distribution', fetchGeoDistribution);
  *                             example: 42
  */
 router.get('/journals/quartiles', fetchJournalQuartileDistribution);
+
+/**
+ * @openapi
+ * /analytics/journals/ranking:
+ *   get:
+ *     summary: Get journal rankings for a project
+ *     description: Returns journal rankings related to articles within a project's scope, sorted by impact factor and article count.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project to get the journal rankings for.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Further filter the articles by a specific subject area name.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter articles by (e.g., "AI,Machine Learning").
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: The starting publication year for filtering articles.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: The ending publication year for filtering articles.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Maximum number of journals to return.
+ *     responses:
+ *       200:
+ *         description: Fetch journal rankings successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch journal rankings successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                       impactFactor:
+ *                         type: number
+ */
+router.get('/journals/ranking', fetchJournalRanking);
+
+/**
+ * @openapi
+ * /analytics/network/collaboration:
+ *   get:
+ *     summary: Get global collaboration network
+ *     description: Returns a network graph (nodes and edges) of authors and institutions collaborating in the given project scope.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit_nodes
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of nodes to return.
+ *       - in: query
+ *         name: min_weight
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Minimum weight of edges to include.
+ *     responses:
+ *       200:
+ *         description: Collaboration network returned successfully.
+ *       400:
+ *         description: Bad Request (missing project_id)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/network/collaboration', fetchCollaborationNetwork);
 
 /**
  * @openapi
