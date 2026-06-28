@@ -10,8 +10,9 @@ import {
   fetchImpactQuartiles,
   fetchCollaborationNetwork,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking
-  fetchRankings
+  fetchJournalRanking,
+  fetchRankings,
+  fetchProductivityMatrix
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -749,5 +750,81 @@ router.get('/network/collaboration', fetchCollaborationNetwork);
  *         description: Project not found
  */
 router.get('/rankings', fetchRankings);
+
+/**
+ * @openapi
+ * /analytics/matrix/productivity:
+ *   get:
+ *     summary: Get author productivity vs impact matrix data
+ *     description: Returns data coordinates (yearlyOutput, hIndex) for each author within the project tracking scope and optional client filters.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Optional subject area filter.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of author points to return.
+ *     responses:
+ *       200:
+ *         description: Productivity matrix points returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch matrix points successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       authorId:
+ *                         type: string
+ *                         example: "12345"
+ *                       yearlyOutput:
+ *                         type: number
+ *                         example: 12
+ *                       hIndex:
+ *                         type: number
+ *                         example: 35
+ *       400:
+ *         description: Bad Request (missing project_id, invalid limit or year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/matrix/productivity', fetchProductivityMatrix);
 
 export default router;
