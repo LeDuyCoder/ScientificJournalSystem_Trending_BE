@@ -204,8 +204,6 @@ export async function fetchDistribution(req, res, next) {
       return res.status(404).json({
         code: 404,
         message: error.message,
-        data: null
-        message: err.message,
         data: null,
       });
     }
