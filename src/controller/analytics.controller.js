@@ -190,11 +190,11 @@ export async function fetchDistribution(req, res, next) {
       message: 'Fetch distribution successfully',
       data,
     });
-  } catch (err) {
-    if (err.status === 404) {
+  } catch (error) {
+    if (error.status === 404 || error.code === 404) {
       return res.status(404).json({
         code: 404,
-        message: err.message,
+        message: error.message,
         data: null
       });
     }
@@ -438,6 +438,34 @@ export async function fetchProductivityMatrix(req, res, next) {
         code: statusCode,
         message: err.message,
         data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+import { getJournalMigrationAnalysis } from '../services/migration.service.js';
+
+/**
+ * Handle GET /analytics/journals/migration
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+export async function fetchJournalMigration(req, res, next) {
+  try {
+    const result = await getJournalMigrationAnalysis(req.validatedQuery);
+    return res.status(200).json({
+      code: 200,
+      message: "Fetch migration analysis successfully",
+      data: result
+    });
+  } catch (err) {
+    if (err.status === 404 || err.code === 404) {
+      return res.status(404).json({
+        code: 404,
+        message: 'Project not found',
+        data: null
       });
     }
     next(err);
