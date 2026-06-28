@@ -11,6 +11,7 @@ import {
   fetchCollaborationNetwork,
   fetchJournalQuartileDistribution,
   fetchJournalRanking
+  fetchRankings
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -649,5 +650,104 @@ router.get('/journals/ranking', fetchJournalRanking);
  *         description: Project not found
  */
 router.get('/network/collaboration', fetchCollaborationNetwork);
+
+/**
+ * @openapi
+ * /analytics/rankings:
+ *   get:
+ *     summary: Fetch influential rankings (authors and institutions)
+ *     description: Returns rankings of the top authors and leading research institutions matching the project's tracking scope and optional client filters.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Optional subject area filter.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 5
+ *         description: Maximum number of entities in each list.
+ *     responses:
+ *       200:
+ *         description: Influential rankings returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch influential rankings successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     authors:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           rank:
+ *                             type: integer
+ *                             example: 1
+ *                           name:
+ *                             type: string
+ *                             example: Dr. Helena Vance
+ *                           score:
+ *                             type: number
+ *                             example: 94.2
+ *                           metric:
+ *                             type: string
+ *                             example: Impact Score
+ *                     institutions:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           rank:
+ *                             type: integer
+ *                             example: 1
+ *                           name:
+ *                             type: string
+ *                             example: Stanford Bio-Dynamics Lab
+ *                           score:
+ *                             type: number
+ *                             example: 98.1
+ *                           metric:
+ *                             type: string
+ *                             example: Citations
+ *       400:
+ *         description: Bad Request (missing project_id, invalid limit or year range)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/rankings', fetchRankings);
 
 export default router;
