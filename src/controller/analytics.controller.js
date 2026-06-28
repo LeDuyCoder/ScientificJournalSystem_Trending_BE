@@ -1,23 +1,35 @@
 /**
  * Express controller for analytics endpoints.
  */
-import logger from "../../utils/logger.js";
+import logger from '../../utils/logger.js';
+import { z } from 'zod';
 import { getTopEntities } from "../services/analytics.service.js";
 import { getPublicationTrends } from "../services/trends.service.js";
 import { getFrontierTopics } from "../services/frontier.service.js";
 import { getDistribution } from "../services/distribution.service.js";
 import { getForecastInsights } from "../services/forecast.service.js";
 import { getGeoDistribution } from "../services/geoDistribution.service.js";
-import { getImpactQuartiles } from "../services/impactQuartiles.service.js";
-import { getCollaborationNetwork } from "../services/network.service.js";
+import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
+import { getCollaborationNetwork } from '../services/network.service.js';
 import { getJournalQuartileDistribution } from "../services/journal-quartile.service.js";
 import { getJournalRanking } from "../services/journal-ranking.service.js";
+import { getTopicIntensityMatrix } from '../services/matrix.service.js';
 import { getInfluentialRankings } from "../services/rankings.service.js";
 import { getProductivityMatrix } from "../services/productivityMatrix.service.js";
 import { getCountryCollaborationChord } from "../services/countryCollaboration.service.js";
 import { getJournalMigrationAnalysis } from '../services/migration.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
+
+const getTopEntitiesSchema = z.object({
+  project_id: z.string().min(1, 'project_id is required'),
+  entity_type: z
+    .enum(['institution', 'university', 'research_center'])
+    .optional(),
+  from_year: z.coerce.number().int().optional(),
+  to_year: z.coerce.number().int().optional(),
+  limit: z.coerce.number().int().positive().max(50).optional().default(10),
+});
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -320,6 +332,35 @@ export async function fetchImpactQuartiles(req, res, next) {
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
+      return res.status(statusCode).json({
+        code: statusCode,
+        message: err.message,
+        data: null,
+      });
+    }
+    next(err);
+  }
+}
+
+/**
+/**
+ * Fetch Topic Intensity Matrix
+ *
+ * Route: GET /analytics/matrix/intensity
+ */
+export async function fetchTopicIntensityMatrix(req, res, next) {
+  try {
+    const payload = { ...req.query, ...req.body };
+    const data = await getTopicIntensityMatrix(payload);
+
+    res.json({
+      code: 200,
+      message: 'Fetch topic intensity matrix successfully',
+      data,
+    });
+  } catch (err) {
+    const statusCode = err.status || err.code;
+    if (statusCode && Number.isInteger(statusCode) && statusCode !== 500) {
       return res.status(statusCode).json({
         code: statusCode,
         message: err.message,

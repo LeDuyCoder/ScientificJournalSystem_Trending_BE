@@ -23,15 +23,17 @@ import {
   fetchGeoDistribution,
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking, fetchCountryCollaborationChord,
+  fetchJournalRanking, 
+  fetchCountryCollaborationChord,
+  fetchTopicIntensityMatrix,
   fetchRankings,
   fetchProductivityMatrix,
   fetchJournalMigration,
-  fetchKeywordVectors
+  fetchKeywordVectors,
+  fetchCollaborationNetwork
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
-import { fetchCollaborationNetwork } from '../controller/analytics.controller.js';
 
 /**
  * Get publication & citation historical trends for chart rendering.
@@ -999,5 +1001,89 @@ router.get('/journals/migration', validateQuery(getJournalMigrationSchema), fetc
  *         description: Project not found
  */
 router.get('/keywords/vectors', fetchKeywordVectors);
+
+/**
+ * @openapi
+ * /analytics/matrix/intensity:
+ *   get:
+ *     summary: Get Topic Intensity Matrix
+ *     description: Returns a heatmap matrix representing the research intensity of authors or institutions across different topics.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: row_type
+ *         schema:
+ *           type: string
+ *           enum: [author, institution]
+ *           default: author
+ *         description: The entity type for matrix rows.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit_rows
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Maximum number of rows (authors/institutions). Max 50.
+ *       - in: query
+ *         name: limit_topics
+ *         schema:
+ *           type: integer
+ *           default: 8
+ *         description: Maximum number of topics (columns). Max 30.
+ *     responses:
+ *       200:
+ *         description: Topic Intensity Matrix returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       rowName:
+ *                         type: string
+ *                       topic:
+ *                         type: string
+ *                       intensity:
+ *                         type: number
+ *       400:
+ *         description: Bad Request
+ *       404:
+ *         description: Project not found
+ */
+router.get('/matrix/intensity', fetchTopicIntensityMatrix);
 
 export default router;
