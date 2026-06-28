@@ -8,6 +8,7 @@ import {
   getTopEntitiesHandler,
   fetchGeoDistribution,
   fetchImpactQuartiles,
+  fetchCollaborationNetwork,
   fetchJournalQuartileDistribution,
   fetchJournalRanking
 } from '../controller/analytics.controller.js';
@@ -591,5 +592,62 @@ router.get('/journals/quartiles', fetchJournalQuartileDistribution);
  *                         type: number
  */
 router.get('/journals/ranking', fetchJournalRanking);
+
+/**
+ * @openapi
+ * /analytics/network/collaboration:
+ *   get:
+ *     summary: Get global collaboration network
+ *     description: Returns a network graph (nodes and edges) of authors and institutions collaborating in the given project scope.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: limit_nodes
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of nodes to return.
+ *       - in: query
+ *         name: min_weight
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Minimum weight of edges to include.
+ *     responses:
+ *       200:
+ *         description: Collaboration network returned successfully.
+ *       400:
+ *         description: Bad Request (missing project_id)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/network/collaboration', fetchCollaborationNetwork);
 
 export default router;
