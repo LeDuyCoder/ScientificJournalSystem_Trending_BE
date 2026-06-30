@@ -55,12 +55,18 @@ export async function getFrontierTopics(filters = {}) {
     keywordIds,
     keywordNamesLower,
   } = prepareFilters(filters);
+  const topicNames = filters.topicNames || [];
 
   // 1. Build Redis cache key theo filter
   const filterParts = [];
 
   if (subjectArea) {
     filterParts.push(`subjectArea:${String(subjectArea).toLowerCase()}`);
+  }
+
+  if (topicNames.length > 0) {
+    const sortedTopics = [...topicNames].sort().join(',');
+    filterParts.push(`topicNames:${sortedTopics.toLowerCase()}`);
   }
 
   if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
@@ -110,9 +116,42 @@ export async function getFrontierTopics(filters = {}) {
   const session = driver.session({ defaultAccessMode: 'READ' });
 
   try {
-    // giữ nguyên toàn bộ logic query Neo4j của bạn ở đây
-    // ...
-    // sau khi tính xong processed:
+    const cypher = `
+      MATCH (t:Topic)<-[:HAS_TOPIC]-(a:Article)
+      WHERE coalesce(a.is_deleted, false) = false
+        AND ($subjectArea = "" OR toLower(t.name) = toLower($subjectArea))
+        AND (size($topicNames) = 0 OR t.name IN $topicNames)
+      WITH t, collect(a) AS articles
+      UNWIND articles AS a
+      OPTIONAL MATCH (citing:Article)-[:REFERENCES]->(a)
+      WHERE coalesce(citing.is_deleted, false) = false
+      WITH t, count(DISTINCT a) AS articleCount, count(citing) AS citationCount
+      WHERE articleCount > 0
+      RETURN t.name AS topic,
+             toFloat(citationCount) / articleCount AS rawIF,
+             toFloat(citationCount) AS rawVelocity
+      ORDER BY rawIF DESC
+      LIMIT 10
+    `;
+
+    const result = await session.run(cypher, {
+      subjectArea: subjectArea || '',
+      topicNames: topicNames
+    });
+
+    const rawRecords = result.records.map(r => ({
+      topic: r.get('topic'),
+      rawIF: r.get('rawIF'),
+      rawVelocity: r.get('rawVelocity')
+    }));
+
+    const maxIF = rawRecords.reduce((max, r) => Math.max(max, r.rawIF), 0) || 1.0;
+    const scaleIF = 10.0 / maxIF;
+
+    const nonZeroVelocities = rawRecords
+      .map(r => r.rawVelocity)
+      .filter(v => v > 0)
+      .sort((a, b) => a - b);
 
     const processed = rawRecords.map(record => {
       let impactFactor = record.rawIF * scaleIF;

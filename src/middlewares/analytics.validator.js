@@ -172,3 +172,10 @@ export const getNetworkTopologySchema = z.object({
   min_weight: z.coerce.number().min(0).default(0.1),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/development-trends
+export const getDevelopmentTrendsSchema = z.object({
+  timeframe: z.string().optional().default('Last 5 Years'),
+  domain: z.string().optional(),
+  region: z.string().optional()
+});

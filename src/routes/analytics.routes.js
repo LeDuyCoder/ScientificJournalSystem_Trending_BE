@@ -13,7 +13,8 @@ import {
   getJournalQuartileSchema,
   getJournalRankingSchema,
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
-  getNetworkTopologySchema
+  getNetworkTopologySchema,
+  getDevelopmentTrendsSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -32,7 +33,8 @@ import {
   fetchJournalMigration,
   fetchNetworkTopology,
   fetchKeywordVectors,
-  fetchCollaborationNetwork
+  fetchCollaborationNetwork,
+  fetchDevelopmentTrends
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1125,5 +1127,6 @@ router.get('/keywords/vectors', fetchKeywordVectors);
  *         description: Project not found
  */
 router.get('/matrix/intensity', fetchTopicIntensityMatrix);
+router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fetchDevelopmentTrends);
 
 export default router;
