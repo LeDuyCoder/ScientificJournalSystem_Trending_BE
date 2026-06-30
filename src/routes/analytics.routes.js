@@ -1127,6 +1127,163 @@ router.get('/keywords/vectors', fetchKeywordVectors);
  *         description: Project not found
  */
 router.get('/matrix/intensity', fetchTopicIntensityMatrix);
+
+/**
+ * @openapi
+ * /analytics/development-trends:
+ *   get:
+ *     summary: Lấy dữ liệu xu hướng phát triển khoa học công nghệ (Development Trends)
+ *     description: >
+ *       Trả về dữ liệu phân tích xu hướng phát triển tích hợp bao gồm:
+ *       Xu hướng công bộ bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring - tự trích dẫn và trích dẫn ngoài),
+ *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection), và Các dự báo tương lai (forecastInsights).
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: timeframe
+ *         schema:
+ *           type: string
+ *           default: 'Last 5 Years'
+ *         description: 'Khung thời gian để phân tích (Ví dụ: Last 5 Years, Last 10 Years).'
+ *       - in: query
+ *         name: domain
+ *         schema:
+ *           type: string
+ *         description: 'Lĩnh vực nghiên cứu (Ví dụ: Computer Science, Biochemistry, Medicine, Environmental Science).'
+ *       - in: query
+ *         name: region
+ *         schema:
+ *           type: string
+ *         description: 'Khu vực địa lý hoặc quốc gia (Tùy chọn lọc).'
+ *     responses:
+ *       200:
+ *         description: Lấy dữ liệu phân tích xu hướng phát triển thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch development trends successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     publicationTrend:
+ *                       type: object
+ *                       properties:
+ *                         growthRate:
+ *                           type: number
+ *                           example: 12.5
+ *                         unit:
+ *                           type: string
+ *                           example: YoY
+ *                         data:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               year:
+ *                                 type: integer
+ *                                 example: 2024
+ *                               value:
+ *                                 type: integer
+ *                                 example: 150
+ *                     citationMirroring:
+ *                       type: object
+ *                       properties:
+ *                         data:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               year:
+ *                                 type: integer
+ *                                 example: 2024
+ *                               external:
+ *                                 type: integer
+ *                                 example: 450
+ *                               self:
+ *                                 type: integer
+ *                                 example: 50
+ *                     topicEvolution:
+ *                       type: object
+ *                       properties:
+ *                         topics:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               name:
+ *                                 type: string
+ *                                 example: 'Neural Networks'
+ *                               domain:
+ *                                 type: string
+ *                                 example: 'Expanding'
+ *                               percentage:
+ *                                 type: integer
+ *                                 example: 35
+ *                               data:
+ *                                 type: array
+ *                                 items:
+ *                                   type: object
+ *                                   properties:
+ *                                     year:
+ *                                       type: integer
+ *                                       example: 2024
+ *                                     value:
+ *                                       type: integer
+ *                                       example: 75
+ *                     frontierDetection:
+ *                       type: object
+ *                       properties:
+ *                         items:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               label:
+ *                                 type: string
+ *                                 example: 'Deep Learning'
+ *                               impactVelocity:
+ *                                 type: number
+ *                                 example: 4.8
+ *                               citationVelocity:
+ *                                 type: number
+ *                                 example: 120.5
+ *                               status:
+ *                                 type: string
+ *                                 example: 'emerging'
+ *                     forecastInsights:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: 'peak'
+ *                           type:
+ *                             type: string
+ *                             example: 'predictive_peak'
+ *                           accent:
+ *                             type: string
+ *                             example: 'growth'
+ *                           title:
+ *                             type: string
+ *                             example: 'Predictive Peak'
+ *                           description:
+ *                             type: string
+ *                             example: 'Biochemistry is projected to reach its citation apex in Q3 2027.'
+ *       400:
+ *         description: Tham số yêu cầu không hợp lệ
+ *       500:
+ *         description: Lỗi hệ thống hoặc lỗi cơ sở dữ liệu
+ */
 router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fetchDevelopmentTrends);
+
 
 export default router;
