@@ -21,6 +21,7 @@ import { getJournalMigrationAnalysis } from '../services/migration.service.js';
 import { getNetworkTopology } from '../services/topology.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
+import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
 
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
@@ -744,6 +745,20 @@ export async function fetchDashboardSearch(req, res, next) {
         data: null,
       });
     }
+    next(err);
+  }
+}
+
+export async function fetchDevelopmentTrends(req, res, next) {
+  try {
+    const data = await getDevelopmentTrends(req.validatedQuery);
+    res.json({
+      code: 200,
+      message: 'Fetch development trends successfully',
+      data
+    });
+  } catch (err) {
+    console.error('Error in fetchDevelopmentTrends:', err);
     next(err);
   }
 }
