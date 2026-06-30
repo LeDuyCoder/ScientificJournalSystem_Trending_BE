@@ -12,7 +12,8 @@ import {
   getGeoDistributionSchema, getCountryCollaborationChordSchema,
   getJournalQuartileSchema,
   getJournalRankingSchema,
-  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema
+  getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
+  getNetworkTopologySchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -29,6 +30,7 @@ import {
   fetchRankings,
   fetchProductivityMatrix,
   fetchJournalMigration,
+  fetchNetworkTopology,
   fetchKeywordVectors,
   fetchCollaborationNetwork
 } from '../controller/analytics.controller.js';
@@ -907,18 +909,56 @@ router.get('/network/chord', validateQuery(getCountryCollaborationChordSchema), 
  *         schema:
  *           type: boolean
  *       - in: query
+ *         name: from_y/**
+ * @openapi
+ * /analytics/network/topology:
+ *   get:
+ *     summary: Get network graph topology (nodes and edges)
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema: { type: string }
+ *         required: true
+ *       - in: query
+ *         name: network_type
+ *         schema: { type: string, enum: ['conceptual', 'collaboration', 'all'] }
+ *       - in: query
+ *         name: subject_area
+ *         schema: { type: string }
+ *       - in: query
+ *         name: keywords
+ *         schema: { type: string }
+ *       - in: query
  *         name: from_year
- *         schema:
- *           type: integer
+ *         schema: { type: integer }
  *       - in: query
  *         name: to_year
- *         schema:
- *           type: integer
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit_nodes
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: min_weight
+ *         schema: { type: number }
  *     responses:
  *       200:
- *         description: Migration analysis returned successfully.
+ *         description: Success
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 200 }
+ *                 message: { type: string, example: 'Fetch network topology successfully' }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     nodes: { type: array, items: { type: object } }
+ *                     edges: { type: array, items: { type: object } }
  */
-router.get('/journals/migration', validateQuery(getJournalMigrationSchema), fetchJournalMigration);
+router.get('/network/topology', validateQuery(getNetworkTopologySchema), fetchNetworkTopology);
 
 /**
  * @openapi

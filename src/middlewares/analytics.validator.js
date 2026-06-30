@@ -163,3 +163,12 @@ export const getJournalMigrationSchema = z.object({
   }, z.boolean()),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/network/topology
+export const getNetworkTopologySchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  network_type: z.enum(['conceptual', 'collaboration', 'all']).default('all'),
+  limit_nodes: z.coerce.number().int().positive().max(150).default(50),
+  min_weight: z.coerce.number().min(0).default(0.1),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);

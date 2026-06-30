@@ -18,6 +18,7 @@ import { getInfluentialRankings } from "../services/rankings.service.js";
 import { getProductivityMatrix } from "../services/productivityMatrix.service.js";
 import { getCountryCollaborationChord } from "../services/countryCollaboration.service.js";
 import { getJournalMigrationAnalysis } from '../services/migration.service.js';
+import { getNetworkTopology } from '../services/topology.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 
@@ -541,6 +542,32 @@ export async function fetchCountryCollaborationChord(req, res, next) {
       return res.status(404).json({ code: 404, message: error.message, data: null });
     }
     next(error);
+  }
+}
+
+/**
+/**
+ * Handler for GET /analytics/network/topology
+ * Fetches and returns network graph topology (nodes and edges) for conceptual or collaboration networks.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+export async function fetchNetworkTopology(req, res, next) {
+  try {
+    const data = await getNetworkTopology(req.validatedQuery);
+
+    res.status(200).json({
+      code: 200,
+      message: 'Fetch network topology successfully',
+      data,
+    });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ code: err.status, message: err.message, data: null });
+    }
+    next(err);
   }
 }
 
