@@ -12,6 +12,7 @@ import {
   getGeoDistributionSchema, getCountryCollaborationChordSchema,
   getJournalQuartileSchema,
   getJournalRankingSchema,
+  getImpactMatrixSchema,
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
   getNetworkTopologySchema,
   getDevelopmentTrendsSchema,
@@ -26,7 +27,8 @@ import {
   fetchGeoDistribution,
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking,
+  fetchJournalRanking, 
+  fetchImpactMatrix,
   fetchCountryCollaborationChord,
   fetchTopicIntensityMatrix,
   fetchRankings,
@@ -112,6 +114,26 @@ const router = express.Router();
  *                             example: [120, 150, 185, 220, 280, 329]
  */
 router.get('/trends', validateQuery(getTrendsSchema), fetchTrends);
+
+/**
+ * Get data for Impact Matrix chart.
+ *
+ * @openapi
+ * /analytics/journals/impact-matrix:
+ *   get:
+ *     summary: Get journal impact matrix (SJR vs H-Index)
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Impact matrix data returned successfully
+ */
+router.get('/journals/impact-matrix', validateQuery(getImpactMatrixSchema), fetchImpactMatrix);
 
 /**
  * Get emerging and frontier tech topics based on Impact vs Velocity.
@@ -913,7 +935,23 @@ router.get('/network/chord', validateQuery(getCountryCollaborationChordSchema), 
  *         schema:
  *           type: boolean
  *       - in: query
- *         name: from_y/**
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ *       404:
+ *         description: Project not found.
+ */
+router.get('/journals/migration', validateQuery(getJournalMigrationSchema), fetchJournalMigration);
+
+/**
  * @openapi
  * /analytics/network/topology:
  *   get:

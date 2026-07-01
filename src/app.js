@@ -1,11 +1,9 @@
 import express from 'express';
-
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger/swagger.js';
 import indexRoutes from './routes/index.js';
 import { errorHandler } from './middlewares/error.middleware.js';
-
 
 /**
  * Main Express application instance.
@@ -13,7 +11,6 @@ import { errorHandler } from './middlewares/error.middleware.js';
  * @type {import('express').Express}
  */
 const app = express();
-
 
 app.use(cors({
   origin: '*',
@@ -45,6 +42,3 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 export default app;
-
-
-

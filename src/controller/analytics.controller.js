@@ -22,6 +22,7 @@ import { getNetworkTopology } from '../services/topology.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
+import { getImpactMatrixData } from '../services/impactMatrix.service.js';
 
 
 const getTopEntitiesSchema = z.object({
@@ -154,6 +155,29 @@ export async function getTopEntitiesHandler(req, res, next) {
     });
   } catch (error) {
     logger.error("Error in getTopEntitiesHandler:", error);
+    next(error);
+  }
+}
+
+/**
+ * Fetch Journal Impact Matrix (SJR vs H-Index).
+ *
+ * Route: GET /analytics/journals/impact-matrix
+ */
+export async function fetchImpactMatrix(req, res, next) {
+  try {
+    const { project_id, subject_area, keywords, from_year, to_year, limit } = req.validatedQuery;
+    const filters = { projectId: project_id, subjectArea: subject_area, keywords, fromYear: from_year, toYear: to_year, limit };
+    
+    const data = await getImpactMatrixData(filters);
+
+    return res.json({
+      code: 200,
+      message: "Fetch impact matrix data successfully",
+      data,
+    });
+  } catch (error) {
+    logger.error("Error in fetchImpactMatrix:", error);
     next(error);
   }
 }
