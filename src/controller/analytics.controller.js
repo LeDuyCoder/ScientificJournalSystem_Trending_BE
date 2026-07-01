@@ -21,7 +21,7 @@ import { getJournalMigrationAnalysis } from '../services/migration.service.js';
 import { getNetworkTopology } from '../services/topology.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
-import { getDevelopmentTrends, getProjectCategories } from '../services/developmentTrends.service.js';
+import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
 
 
 const getTopEntitiesSchema = z.object({
@@ -764,44 +764,28 @@ export async function fetchDevelopmentTrends(req, res, next) {
   }
 }
 
+/**
+ * Lấy danh sách Subject Categories của một project.
+ * Route: GET /analytics/subject-categories
+ */
 export async function fetchProjectSubjectCategories(req, res, next) {
   try {
-    const { project_id } = req.validatedQuery;
-    const { subjectArea, categories } = await getProjectCategories(project_id);
+    const filters = {
+      projectId: req.validatedQuery.project_id,
+      page: req.validatedQuery.page,
+      limit: req.validatedQuery.limit,
+      search: req.validatedQuery.search,
+    };
 
-    const page = parseInt(req.validatedQuery.page, 10) || 1;
-    const limit = Math.min(parseInt(req.validatedQuery.limit, 10) || 10, 100);
-    const search = req.validatedQuery.search ? String(req.validatedQuery.search).trim().toLowerCase() : '';
-
-    let filtered = categories;
-    if (search) {
-      filtered = categories.filter(c => c.name.toLowerCase().includes(search));
-    }
-
-    const total = filtered.length;
-    const totalPages = Math.ceil(total / limit);
-    const start = (page - 1) * limit;
-    const items = filtered.slice(start, start + limit);
+    const { getProjectSubjectCategories } = await import('../services/analytics.service.js');
+    const data = await getProjectSubjectCategories(filters);
 
     res.json({
       code: 200,
       message: 'Fetch project subject categories successfully',
-      data: {
-        subject_area: subjectArea,
-        items: items.map(c => ({
-          subject_category_id: c.id,
-          display_name: c.name,
-        })),
-        pagination: {
-          page,
-          limit,
-          total,
-          total_pages: totalPages,
-        },
-      },
+      data,
     });
   } catch (err) {
-    console.error('Error in fetchProjectSubjectCategories:', err);
     if (err.status) {
       return res.status(err.status).json({ code: err.status, message: err.message, data: null });
     }
