@@ -179,3 +179,11 @@ export const getDevelopmentTrendsSchema = z.object({
   domain: z.string().optional(),
   region: z.string().optional()
 });
+
+// Schema cho /analytics/subject-categories
+export const getSubjectCategoriesSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(10),
+  search: z.string().optional(),
+});

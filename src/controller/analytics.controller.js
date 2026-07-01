@@ -762,3 +762,32 @@ export async function fetchDevelopmentTrends(req, res, next) {
     next(err);
   }
 }
+
+/**
+ * Lấy danh sách Subject Categories của một project.
+ * Route: GET /analytics/subject-categories
+ */
+export async function fetchProjectSubjectCategories(req, res, next) {
+  try {
+    const filters = {
+      projectId: req.validatedQuery.project_id,
+      page: req.validatedQuery.page,
+      limit: req.validatedQuery.limit,
+      search: req.validatedQuery.search,
+    };
+
+    const { getProjectSubjectCategories } = await import('../services/analytics.service.js');
+    const data = await getProjectSubjectCategories(filters);
+
+    res.json({
+      code: 200,
+      message: 'Fetch project subject categories successfully',
+      data,
+    });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ code: err.status, message: err.message, data: null });
+    }
+    next(err);
+  }
+}
