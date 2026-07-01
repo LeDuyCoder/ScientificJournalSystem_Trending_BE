@@ -92,9 +92,9 @@ function formatForecastInsights(forecastData, domain) {
  * @returns {Promise<Object>} The aggregated development trends data.
  */
 export async function getDevelopmentTrends(query = {}) {
-  const { project_id, timeframe, domain, region } = query;
+  const { project_id, timeframe, domain, subject_category, region } = query;
 
-  const cacheKey = `analytics:dev-trends:v2:${project_id || 'all'}:${String(timeframe || 'default').trim().toLowerCase()}:${String(domain || 'all').trim().toLowerCase()}:${String(region || 'all').trim().toLowerCase()}`;
+  const cacheKey = `analytics:dev-trends:v3:${project_id || 'all'}:${String(timeframe || 'default').trim().toLowerCase()}:${String(domain || 'all').trim().toLowerCase()}:${String(subject_category || 'all').trim().toLowerCase()}:${String(region || 'all').trim().toLowerCase()}`;
 
   // 1. Try reading from Redis cache first
   try {
@@ -108,74 +108,138 @@ export async function getDevelopmentTrends(query = {}) {
     console.warn('Failed to get development trends from Redis:', err);
   }
 
-  // Map hardcoded frontend domain names to the actual database Subject Areas
-  const mapDomainToDb = (dom) => {
-    const d = String(dom || '').trim().toLowerCase();
-    if (d === 'all domains' || d === 'all' || d === '') return 'all';
-    if (d === 'biological sciences') return 'Biochemistry';
-    if (d === 'medical research') return 'Medicine';
-    if (d === 'computer science') return 'Computer Science';
-    if (d === 'environmental science') return 'Environmental Science';
-    return dom;
-  };
-
   let resolvedProjectId = null;
   let mappedDomain = null;
   let topicNames = [];
   let projectCategoryIds = [];
+  let isFilterCategoryActive = false;
+
+  /**
+   * Resolve a user-supplied domain/subject-area name to the actual display_name
+   * stored in the Subject_Area table, using a case-insensitive partial match.
+   * Returns 'all' when the input is blank or a generic "all" placeholder.
+   */
+  const resolveDomainFromDb = async (client, rawDomain) => {
+    const d = String(rawDomain || '').trim().toLowerCase();
+    if (!d || d === 'all' || d === 'all domains' || d === 'all categories') return 'all';
+
+    const res = await client.query(
+      `SELECT display_name FROM "Subject_Area"
+       WHERE LOWER(display_name) ILIKE $1
+         AND COALESCE(is_deleted, false) = false
+       LIMIT 1`,
+      [`%${d}%`]
+    );
+    if (res.rows.length > 0) return res.rows[0].display_name;
+
+    // No match found — treat as 'all' to avoid empty charts
+    console.warn(`[DevelopmentTrends] No Subject_Area found matching "${rawDomain}", falling back to all.`);
+    return 'all';
+  };
 
   const client = await pool.connect();
   try {
-    if (project_id && project_id !== 'undefined' && project_id !== 'null') {
+    const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
+
+    isFilterCategoryActive = subject_category && 
+      String(subject_category).trim().toLowerCase() !== 'all' && 
+      String(subject_category).trim().toLowerCase() !== 'all categories' &&
+      String(subject_category).trim().toLowerCase() !== 'all domains';
+
+    if (hasProject) {
       resolvedProjectId = project_id;
       const scope = await getProjectScope(client, project_id);
       mappedDomain = scope.subjectAreaName;
-      topicNames = scope.keywordNames;
-      projectCategoryIds = scope.subjectCategoryIds;
+
+      if (isFilterCategoryActive) {
+        const catRes = await client.query(
+          `SELECT subject_category_id, display_name 
+           FROM "Subject_Category" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+             AND subject_area_id = $2
+             AND COALESCE(is_deleted, false) = false`,
+          [subject_category.trim(), scope.subjectAreaId]
+        );
+        if (catRes.rows.length > 0) {
+          const cat = catRes.rows[0];
+          projectCategoryIds = [Number(cat.subject_category_id)];
+
+          // Pull topics belonging to this category
+          const topicsRes = await client.query(
+            `SELECT display_name FROM "Topic" WHERE subject_category_id = $1`,
+            [cat.subject_category_id]
+          );
+          topicNames = topicsRes.rows.map(r => r.display_name);
+        } else {
+          projectCategoryIds = [];
+          topicNames = [];
+        }
+      } else {
+        topicNames = scope.keywordNames;
+        projectCategoryIds = scope.subjectCategoryIds;
+      }
     } else {
-      // Fallback or global mode
+      // Global mode
       const projectRes = await client.query('SELECT project_id FROM "Project" LIMIT 1');
       if (projectRes.rows.length > 0) {
         resolvedProjectId = projectRes.rows[0].project_id;
-        const scope = await getProjectScope(client, resolvedProjectId);
-        mappedDomain = domain ? mapDomainToDb(domain) : scope.subjectAreaName;
-        if (domain && String(domain).trim().toLowerCase() !== String(scope.subjectAreaName).trim().toLowerCase()) {
-          if (mappedDomain === 'all') {
-            topicNames = [];
-            projectCategoryIds = [];
-          } else {
-            const topicsRes = await client.query(
-              `SELECT DISTINCT t.display_name
-               FROM "Topic" t
-               JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-               JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-               WHERE LOWER(sa.display_name) = LOWER($1)`,
-              [mappedDomain]
-            );
-            topicNames = topicsRes.rows.map(r => r.display_name);
+      }
+
+      // Dynamic DB lookup — no more hardcoded name mapping
+      mappedDomain = domain ? await resolveDomainFromDb(client, domain) : 'all';
+
+      if (isFilterCategoryActive) {
+        const catRes = await client.query(
+          `SELECT subject_category_id, subject_area_id, display_name 
+           FROM "Subject_Category" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+             AND COALESCE(is_deleted, false) = false`,
+          [subject_category.trim()]
+        );
+        if (catRes.rows.length > 0) {
+          const cat = catRes.rows[0];
+          projectCategoryIds = [Number(cat.subject_category_id)];
+
+          const saRes = await client.query(
+            `SELECT display_name FROM "Subject_Area" WHERE subject_area_id = $1`,
+            [cat.subject_area_id]
+          );
+          if (saRes.rows.length > 0) {
+            mappedDomain = saRes.rows[0].display_name;
           }
-        } else {
-          topicNames = scope.keywordNames;
-          projectCategoryIds = scope.subjectCategoryIds;
-        }
-      } else {
-        mappedDomain = mapDomainToDb(domain);
-        if (mappedDomain && mappedDomain !== 'all') {
+
           const topicsRes = await client.query(
-            `SELECT DISTINCT t.display_name
-             FROM "Topic" t
-             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-             WHERE LOWER(sa.display_name) = LOWER($1)`,
-            [mappedDomain]
+            `SELECT display_name FROM "Topic" WHERE subject_category_id = $1`,
+            [cat.subject_category_id]
           );
           topicNames = topicsRes.rows.map(r => r.display_name);
+        } else {
+          projectCategoryIds = [];
+          topicNames = [];
         }
+      } else if (mappedDomain && mappedDomain !== 'all') {
+        const catsRes = await client.query(
+          `SELECT subject_category_id FROM "Subject_Category" sc
+           JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+           WHERE LOWER(sa.display_name) = LOWER($1) AND COALESCE(sc.is_deleted, false) = false`,
+          [mappedDomain]
+        );
+        projectCategoryIds = catsRes.rows.map(r => Number(r.subject_category_id));
+
+        const topicsRes = await client.query(
+          `SELECT DISTINCT t.display_name
+           FROM "Topic" t
+           JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+           JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+           WHERE LOWER(sa.display_name) = LOWER($1)`,
+          [mappedDomain]
+        );
+        topicNames = topicsRes.rows.map(r => r.display_name);
       }
     }
   } catch (err) {
     console.error('Error resolving project scope:', err);
-    mappedDomain = mapDomainToDb(domain);
+    mappedDomain = 'all'; // safe fallback — no hardcoded name mapping
   } finally {
     client.release();
   }
@@ -189,7 +253,8 @@ export async function getDevelopmentTrends(query = {}) {
       const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
       const trendsResult = await getPublicationTrends({
         project_id: hasProject ? resolvedProjectId : null,
-        subject_area: mappedDomain === 'all' ? null : mappedDomain,
+        subject_category: isFilterCategoryActive ? subject_category : null,
+        subject_area: isFilterCategoryActive ? null : (mappedDomain === 'all' ? null : mappedDomain),
         from_year,
         to_year
       });
@@ -462,4 +527,46 @@ export async function getDevelopmentTrends(query = {}) {
   }
 
   return responseData;
+}
+
+export async function getProjectCategories(projectId) {
+  const client = await pool.connect();
+  try {
+    let subjectAreaId = null;
+    if (projectId && projectId !== 'undefined' && projectId !== 'null') {
+      const projectRes = await client.query(
+        `SELECT subject_area FROM "Project" WHERE project_id = $1`,
+        [projectId]
+      );
+      if (projectRes.rows.length > 0) {
+        subjectAreaId = projectRes.rows[0].subject_area;
+      }
+    }
+
+    // Fallback to first project's subject area if no project_id provided
+    if (!subjectAreaId) {
+      const fallbackRes = await client.query(
+        `SELECT subject_area FROM "Project" LIMIT 1`
+      );
+      if (fallbackRes.rows.length > 0) {
+        subjectAreaId = fallbackRes.rows[0].subject_area;
+      }
+    }
+
+    if (!subjectAreaId) {
+      return [];
+    }
+
+    const categoriesRes = await client.query(
+      `SELECT subject_category_id AS id, display_name AS name 
+       FROM "Subject_Category" 
+       WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false
+       ORDER BY display_name ASC`,
+      [subjectAreaId]
+    );
+
+    return categoriesRes.rows;
+  } finally {
+    client.release();
+  }
 }

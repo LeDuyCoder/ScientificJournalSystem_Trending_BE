@@ -21,7 +21,8 @@ import { getJournalMigrationAnalysis } from '../services/migration.service.js';
 import { getNetworkTopology } from '../services/topology.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
-import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
+import { getDevelopmentTrends, getProjectCategories } from '../services/developmentTrends.service.js';
+
 
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
@@ -759,6 +760,21 @@ export async function fetchDevelopmentTrends(req, res, next) {
     });
   } catch (err) {
     console.error('Error in fetchDevelopmentTrends:', err);
+    next(err);
+  }
+}
+
+export async function fetchProjectCategories(req, res, next) {
+  try {
+    const { project_id } = req.query;
+    const data = await getProjectCategories(project_id);
+    res.json({
+      code: 200,
+      message: 'Fetch project subject categories successfully',
+      data
+    });
+  } catch (err) {
+    console.error('Error in fetchProjectCategories:', err);
     next(err);
   }
 }

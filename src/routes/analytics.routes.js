@@ -34,7 +34,8 @@ import {
   fetchNetworkTopology,
   fetchKeywordVectors,
   fetchCollaborationNetwork,
-  fetchDevelopmentTrends
+  fetchDevelopmentTrends,
+  fetchProjectCategories
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1135,27 +1136,49 @@ router.get('/matrix/intensity', fetchTopicIntensityMatrix);
  *     summary: Lấy dữ liệu xu hướng phát triển khoa học công nghệ (Development Trends)
  *     description: >
  *       Trả về dữ liệu phân tích xu hướng phát triển tích hợp bao gồm:
- *       Xu hướng công bộ bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring - tự trích dẫn và trích dẫn ngoài),
- *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection), và Các dự báo tương lai (forecastInsights).
+ *       Xu hướng công bố bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring),
+ *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection),
+ *       và Các dự báo tương lai (forecastInsights).
+ *       Hỗ trợ lọc động theo subject_category — không cần code cứng tên lĩnh vực.
  *     tags:
  *       - Analytics
  *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         description: 'ID của project. Nếu cung cấp, hệ thống sẽ tự động xác định Subject Area và phạm vi phân tích.'
+ *         example: '2'
  *       - in: query
  *         name: timeframe
  *         schema:
  *           type: string
  *           default: 'Last 5 Years'
- *         description: 'Khung thời gian để phân tích (Ví dụ: Last 5 Years, Last 10 Years).'
+ *           enum:
+ *             - 'Last Year'
+ *             - 'Last 3 Years'
+ *             - 'Last 5 Years'
+ *             - 'Last 10 Years'
+ *         description: 'Khung thời gian để phân tích.'
+ *         example: 'Last 5 Years'
+ *       - in: query
+ *         name: subject_category
+ *         schema:
+ *           type: string
+ *         description: >
+ *           Tên Subject Category để lọc phân tích (lấy từ API /analytics/subject-categories).
+ *           Truyền "All Categories" hoặc bỏ trống để xem tất cả danh mục.
+ *         example: 'Artificial Intelligence'
  *       - in: query
  *         name: domain
  *         schema:
  *           type: string
- *         description: 'Lĩnh vực nghiên cứu (Ví dụ: Computer Science, Biochemistry, Medicine, Environmental Science).'
+ *         description: '(Legacy) Tên Subject Area. Ưu tiên dùng subject_category thay thế.'
  *       - in: query
  *         name: region
  *         schema:
  *           type: string
- *         description: 'Khu vực địa lý hoặc quốc gia (Tùy chọn lọc).'
+ *         description: 'Khu vực địa lý (tùy chọn lọc). Ví dụ: Global Distribution, North America.'
  *     responses:
  *       200:
  *         description: Lấy dữ liệu phân tích xu hướng phát triển thành công
@@ -1285,5 +1308,58 @@ router.get('/matrix/intensity', fetchTopicIntensityMatrix);
  */
 router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fetchDevelopmentTrends);
 
+/**
+ * @openapi
+ * /analytics/subject-categories:
+ *   get:
+ *     summary: Lấy danh sách Subject Category của một Project
+ *     description: >
+ *       Trả về danh sách các Subject Category thuộc Subject Area của project được chỉ định.
+ *       Kết quả được dùng để render bộ lọc danh mục động trên giao diện, thay thế hoàn toàn
+ *       cho danh sách lĩnh vực bị code cứng trước đây.
+ *       Nếu không cung cấp project_id, hệ thống sẽ tự động lấy Subject Area của project đầu tiên
+ *       trong cơ sở dữ liệu.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: false
+ *         description: 'ID của project cần lấy danh mục. Nếu bỏ qua, dùng project đầu tiên làm fallback.'
+ *         example: '2'
+ *     responses:
+ *       200:
+ *         description: Lấy danh sách Subject Category thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch project subject categories successfully
+ *                 data:
+ *                   type: array
+ *                   description: 'Danh sách các Subject Category. Dùng giá trị "name" để truyền vào subject_category của /analytics/development-trends.'
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         description: 'ID của Subject Category trong database'
+ *                         example: '701'
+ *                       name:
+ *                         type: string
+ *                         description: 'Tên hiển thị của Subject Category — dùng làm giá trị filter'
+ *                         example: 'Human-Computer Interaction'
+ *       500:
+ *         description: Lỗi hệ thống hoặc lỗi cơ sở dữ liệu
+ */
+router.get('/subject-categories', fetchProjectCategories);
 
 export default router;

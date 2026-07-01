@@ -27,6 +27,12 @@ app.use(express.json());
 // Basic health check & routes
 app.use('/', indexRoutes);
 
+// Swagger JSON spec endpoint (for Postman import or direct access)
+app.get('/api-docs.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+
 // Swagger UI
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 

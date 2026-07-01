@@ -57,12 +57,12 @@ function normalizeTrendSeries(records, from_year, to_year) {
 }
 
 export async function getPublicationTrends(options = {}) {
-  const { project_id, subject_area, keywords, from_year, to_year } = options;
+  const { project_id, subject_area, subject_category, keywords, from_year, to_year } = options;
 
   const keywordList = prepareKeywords(keywords);
   const normalizedKeywords = [...keywordList].map(s => s.toLowerCase()).sort().join(',');
 
-  const cacheKey = `analytics:trends:v1:${project_id || 'all'}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}`;
+  const cacheKey = `analytics:trends:v2:${project_id || 'all'}:${(subject_area || '').toLowerCase()}:${(subject_category || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}`;
 
   try {
     const cachedData = await redisGet(cacheKey);
@@ -161,6 +161,39 @@ export async function getPublicationTrends(options = {}) {
       } else {
         return { timeline: [], series: [{ name: 'Articles', data: [] }, { name: 'Citations', data: [] }] };
       }
+    }
+
+    // --- Client custom filter: subject_category ---
+    if (subject_category) {
+      const catRes = await client.query(
+        `SELECT subject_category_id FROM "Subject_Category" 
+         WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+           AND COALESCE(is_deleted, false) = false`,
+        [subject_category.trim()]
+      );
+
+      if (catRes.rows.length === 0) {
+        return { timeline: [], series: [{ name: 'Articles', data: [] }, { name: 'Citations', data: [] }] };
+      }
+
+      const categoryId = Number(catRes.rows[0].subject_category_id);
+      params.push([categoryId]);
+      const filterCatIndex = params.length;
+      sqlFilters.push(`
+        (
+          EXISTS (
+            SELECT 1 FROM "Topic" ft
+            WHERE ft.topic_id = a.primary_topic
+              AND ft.subject_category_id = ANY($${filterCatIndex}::bigint[])
+          )
+          OR EXISTS (
+            SELECT 1 FROM "Sub_Topic" fst
+            JOIN "Topic" fst_topic ON fst.topic_id = fst_topic.topic_id
+            WHERE fst.article_id = a.article_id
+              AND fst_topic.subject_category_id = ANY($${filterCatIndex}::bigint[])
+          )
+        )
+      `);
     }
 
     // --- Client custom filter: subject_area ---

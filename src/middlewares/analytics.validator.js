@@ -178,5 +178,6 @@ export const getDevelopmentTrendsSchema = z.object({
   project_id: z.string().optional(),
   timeframe: z.string().optional().default('Last 5 Years'),
   domain: z.string().optional(),
+  subject_category: z.string().optional(),
   region: z.string().optional()
 });
