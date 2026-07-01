@@ -15,7 +15,8 @@ import {
   getImpactMatrixSchema,
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
   getNetworkTopologySchema,
-  getDevelopmentTrendsSchema
+  getDevelopmentTrendsSchema,
+  getSubjectCategoriesSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -36,7 +37,8 @@ import {
   fetchNetworkTopology,
   fetchKeywordVectors,
   fetchCollaborationNetwork,
-  fetchDevelopmentTrends
+  fetchDevelopmentTrends,
+  fetchProjectSubjectCategories
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1173,27 +1175,49 @@ router.get('/matrix/intensity', fetchTopicIntensityMatrix);
  *     summary: Lấy dữ liệu xu hướng phát triển khoa học công nghệ (Development Trends)
  *     description: >
  *       Trả về dữ liệu phân tích xu hướng phát triển tích hợp bao gồm:
- *       Xu hướng công bộ bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring - tự trích dẫn và trích dẫn ngoài),
- *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection), và Các dự báo tương lai (forecastInsights).
+ *       Xu hướng công bố bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring),
+ *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection),
+ *       và Các dự báo tương lai (forecastInsights).
+ *       Hỗ trợ lọc động theo subject_category — không cần code cứng tên lĩnh vực.
  *     tags:
  *       - Analytics
  *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         description: 'ID của project. Nếu cung cấp, hệ thống sẽ tự động xác định Subject Area và phạm vi phân tích.'
+ *         example: '2'
  *       - in: query
  *         name: timeframe
  *         schema:
  *           type: string
  *           default: 'Last 5 Years'
- *         description: 'Khung thời gian để phân tích (Ví dụ: Last 5 Years, Last 10 Years).'
+ *           enum:
+ *             - 'Last Year'
+ *             - 'Last 3 Years'
+ *             - 'Last 5 Years'
+ *             - 'Last 10 Years'
+ *         description: 'Khung thời gian để phân tích.'
+ *         example: 'Last 5 Years'
+ *       - in: query
+ *         name: subject_category
+ *         schema:
+ *           type: string
+ *         description: >
+ *           Tên Subject Category để lọc phân tích (lấy từ API /analytics/subject-categories).
+ *           Truyền "All Categories" hoặc bỏ trống để xem tất cả danh mục.
+ *         example: 'Artificial Intelligence'
  *       - in: query
  *         name: domain
  *         schema:
  *           type: string
- *         description: 'Lĩnh vực nghiên cứu (Ví dụ: Computer Science, Biochemistry, Medicine, Environmental Science).'
+ *         description: '(Legacy) Tên Subject Area. Ưu tiên dùng subject_category thay thế.'
  *       - in: query
  *         name: region
  *         schema:
  *           type: string
- *         description: 'Khu vực địa lý hoặc quốc gia (Tùy chọn lọc).'
+ *         description: 'Khu vực địa lý (tùy chọn lọc). Ví dụ: Global Distribution, North America.'
  *     responses:
  *       200:
  *         description: Lấy dữ liệu phân tích xu hướng phát triển thành công
@@ -1322,6 +1346,102 @@ router.get('/matrix/intensity', fetchTopicIntensityMatrix);
  *         description: Lỗi hệ thống hoặc lỗi cơ sở dữ liệu
  */
 router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fetchDevelopmentTrends);
+
+/**
+ * @openapi
+ * /analytics/subject-categories:
+ *   get:
+ *     summary: Lấy danh sách các subject category liên quan tới project
+ *     description: Trả về danh sách các subject category trực thuộc subject area mà project quan tâm, hỗ trợ phân trang và tìm kiếm theo tên.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: ID của project
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Trang số (từ 1 trở đi)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Số lượng bản ghi trên một trang (tối đa 100)
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm gần đúng theo display_name của subject category
+ *     responses:
+ *       200:
+ *         description: Lấy danh sách thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch project subject categories successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     subject_area:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                           example: 1
+ *                         name:
+ *                           type: string
+ *                           example: 'Life Sciences'
+ *                     items:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           subject_category_id:
+ *                             type: integer
+ *                             example: 101
+ *                           display_name:
+ *                             type: string
+ *                             example: 'Biochemistry'
+ *                           description:
+ *                             type: string
+ *                             example: 'Study of chemical processes within living organisms'
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 10
+ *                         total:
+ *                           type: integer
+ *                           example: 25
+ *                         total_pages:
+ *                           type: integer
+ *                           example: 3
+ *       400:
+ *         description: Tham số yêu cầu không hợp lệ
+ *       404:
+ *         description: Không tìm thấy project hoặc project chưa gán subject area
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.get('/subject-categories', validateQuery(getSubjectCategoriesSchema), fetchProjectSubjectCategories);
 
 
 export default router;

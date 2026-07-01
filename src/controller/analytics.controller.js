@@ -24,6 +24,7 @@ import { getDashboardSearchSuggestions } from '../services/dashboardSearch.servi
 import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
 import { getImpactMatrixData } from '../services/impactMatrix.service.js';
 
+
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
   entity_type: z
@@ -276,7 +277,7 @@ export async function fetchForecast(req, res, next) {
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
-       return res.status(statusCode).json({
+      return res.status(statusCode).json({
         code: statusCode,
         message: err.message,
         data: null,
@@ -783,6 +784,35 @@ export async function fetchDevelopmentTrends(req, res, next) {
     });
   } catch (err) {
     console.error('Error in fetchDevelopmentTrends:', err);
+    next(err);
+  }
+}
+
+/**
+ * Lấy danh sách Subject Categories của một project.
+ * Route: GET /analytics/subject-categories
+ */
+export async function fetchProjectSubjectCategories(req, res, next) {
+  try {
+    const filters = {
+      projectId: req.validatedQuery.project_id,
+      page: req.validatedQuery.page,
+      limit: req.validatedQuery.limit,
+      search: req.validatedQuery.search,
+    };
+
+    const { getProjectSubjectCategories } = await import('../services/analytics.service.js');
+    const data = await getProjectSubjectCategories(filters);
+
+    res.json({
+      code: 200,
+      message: 'Fetch project subject categories successfully',
+      data,
+    });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ code: err.status, message: err.message, data: null });
+    }
     next(err);
   }
 }
