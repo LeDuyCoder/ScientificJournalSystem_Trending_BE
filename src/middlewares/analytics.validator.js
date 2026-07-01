@@ -76,6 +76,13 @@ export const getJournalQuartileSchema = z.object({
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
 
+// Schema cho /analytics/journals/impact-matrix
+export const getImpactMatrixSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  limit: z.coerce.number().int().positive().max(100).optional().default(50),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
+
 // Schema cho /analytics/frontier
 export const getFrontierSchema = z.object({
   subjectArea: z.string().trim().optional(),
