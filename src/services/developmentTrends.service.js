@@ -2,7 +2,8 @@ import pool from '../config/database.js';
 import { neo4jDriver } from '../config/neo4j.js';
 import { getPublicationTrends } from './trends.service.js';
 import { getFrontierTopics } from './frontier.service.js';
-import { getForecastInsights } from './forecast.service.js';
+import { getForecastInsights, getProjectScope } from './forecast.service.js';
+import { redisGet, redisSet } from './redis.service.js';
 
 function calcGrowthRate(current, previous) {
   if (!previous) return 0;
@@ -91,282 +92,493 @@ function formatForecastInsights(forecastData, domain) {
  * @returns {Promise<Object>} The aggregated development trends data.
  */
 export async function getDevelopmentTrends(query = {}) {
-  const { timeframe, domain, region } = query;
+  const { project_id, timeframe, domain, subject_category, region } = query;
 
-  // Map hardcoded frontend domain names to the actual database Subject Areas
-  const mapDomainToDb = (dom) => {
-    const d = String(dom || '').trim().toLowerCase();
-    if (d === 'biological sciences') return 'Biochemistry';
-    if (d === 'medical research') return 'Medicine';
-    if (d === 'computer science') return 'Computer Science';
-    if (d === 'environmental science') return 'Environmental Science';
-    return dom;
+  const cacheKey = `analytics:dev-trends:v3:${project_id || 'all'}:${String(timeframe || 'default').trim().toLowerCase()}:${String(domain || 'all').trim().toLowerCase()}:${String(subject_category || 'all').trim().toLowerCase()}:${String(region || 'all').trim().toLowerCase()}`;
+
+  // 1. Try reading from Redis cache first
+  try {
+    const cachedData = await redisGet(cacheKey);
+    if (cachedData) {
+      console.log(`[Redis] Development trends cache hit: ${cacheKey}`);
+      return JSON.parse(cachedData);
+    }
+    console.log(`[Redis] Development trends cache miss: ${cacheKey}`);
+  } catch (err) {
+    console.warn('Failed to get development trends from Redis:', err);
+  }
+
+  let resolvedProjectId = null;
+  let mappedDomain = null;
+  let topicNames = [];
+  let projectCategoryIds = [];
+  let isFilterCategoryActive = false;
+
+  /**
+   * Resolve a user-supplied domain/subject-area name to the actual display_name
+   * stored in the Subject_Area table, using a case-insensitive partial match.
+   * Returns 'all' when the input is blank or a generic "all" placeholder.
+   */
+  const resolveDomainFromDb = async (client, rawDomain) => {
+    const d = String(rawDomain || '').trim().toLowerCase();
+    if (!d || d === 'all' || d === 'all domains' || d === 'all categories') return 'all';
+
+    const res = await client.query(
+      `SELECT display_name FROM "Subject_Area"
+       WHERE LOWER(display_name) ILIKE $1
+         AND COALESCE(is_deleted, false) = false
+       LIMIT 1`,
+      [`%${d}%`]
+    );
+    if (res.rows.length > 0) return res.rows[0].display_name;
+
+    // No match found — treat as 'all' to avoid empty charts
+    console.warn(`[DevelopmentTrends] No Subject_Area found matching "${rawDomain}", falling back to all.`);
+    return 'all';
   };
 
-  const mappedDomain = mapDomainToDb(domain);
+  const client = await pool.connect();
+  try {
+    const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
 
-  let topicNames = [];
-  if (mappedDomain && mappedDomain !== 'all') {
-    try {
-      const topicsRes = await pool.query(
-        `SELECT DISTINCT t.display_name
-         FROM "Topic" t
-         JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-         JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-         WHERE LOWER(sa.display_name) = LOWER($1)`,
-        [mappedDomain]
-      );
-      topicNames = topicsRes.rows.map(r => r.display_name);
-    } catch (err) {
-      console.error('Error fetching topic names from postgres:', err);
+    isFilterCategoryActive = subject_category && 
+      String(subject_category).trim().toLowerCase() !== 'all' && 
+      String(subject_category).trim().toLowerCase() !== 'all categories' &&
+      String(subject_category).trim().toLowerCase() !== 'all domains';
+
+    if (hasProject) {
+      resolvedProjectId = project_id;
+      const scope = await getProjectScope(client, project_id);
+      mappedDomain = scope.subjectAreaName;
+
+      if (isFilterCategoryActive) {
+        const catRes = await client.query(
+          `SELECT subject_category_id, display_name 
+           FROM "Subject_Category" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+             AND subject_area_id = $2
+             AND COALESCE(is_deleted, false) = false`,
+          [subject_category.trim(), scope.subjectAreaId]
+        );
+        if (catRes.rows.length > 0) {
+          const cat = catRes.rows[0];
+          projectCategoryIds = [Number(cat.subject_category_id)];
+
+          // Pull topics belonging to this category
+          const topicsRes = await client.query(
+            `SELECT display_name FROM "Topic" WHERE subject_category_id = $1`,
+            [cat.subject_category_id]
+          );
+          topicNames = topicsRes.rows.map(r => r.display_name);
+        } else {
+          projectCategoryIds = [];
+          topicNames = [];
+        }
+      } else {
+        topicNames = scope.keywordNames;
+        projectCategoryIds = scope.subjectCategoryIds;
+      }
+    } else {
+      // Global mode
+      const projectRes = await client.query('SELECT project_id FROM "Project" LIMIT 1');
+      if (projectRes.rows.length > 0) {
+        resolvedProjectId = projectRes.rows[0].project_id;
+      }
+
+      // Dynamic DB lookup — no more hardcoded name mapping
+      mappedDomain = domain ? await resolveDomainFromDb(client, domain) : 'all';
+
+      if (isFilterCategoryActive) {
+        const catRes = await client.query(
+          `SELECT subject_category_id, subject_area_id, display_name 
+           FROM "Subject_Category" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+             AND COALESCE(is_deleted, false) = false`,
+          [subject_category.trim()]
+        );
+        if (catRes.rows.length > 0) {
+          const cat = catRes.rows[0];
+          projectCategoryIds = [Number(cat.subject_category_id)];
+
+          const saRes = await client.query(
+            `SELECT display_name FROM "Subject_Area" WHERE subject_area_id = $1`,
+            [cat.subject_area_id]
+          );
+          if (saRes.rows.length > 0) {
+            mappedDomain = saRes.rows[0].display_name;
+          }
+
+          const topicsRes = await client.query(
+            `SELECT display_name FROM "Topic" WHERE subject_category_id = $1`,
+            [cat.subject_category_id]
+          );
+          topicNames = topicsRes.rows.map(r => r.display_name);
+        } else {
+          projectCategoryIds = [];
+          topicNames = [];
+        }
+      } else if (mappedDomain && mappedDomain !== 'all') {
+        const catsRes = await client.query(
+          `SELECT subject_category_id FROM "Subject_Category" sc
+           JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+           WHERE LOWER(sa.display_name) = LOWER($1) AND COALESCE(sc.is_deleted, false) = false`,
+          [mappedDomain]
+        );
+        projectCategoryIds = catsRes.rows.map(r => Number(r.subject_category_id));
+
+        const topicsRes = await client.query(
+          `SELECT DISTINCT t.display_name
+           FROM "Topic" t
+           JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+           JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+           WHERE LOWER(sa.display_name) = LOWER($1)`,
+          [mappedDomain]
+        );
+        topicNames = topicsRes.rows.map(r => r.display_name);
+      }
     }
+  } catch (err) {
+    console.error('Error resolving project scope:', err);
+    mappedDomain = 'all'; // safe fallback — no hardcoded name mapping
+  } finally {
+    client.release();
   }
 
   const { from_year, to_year } = parseTimeframe(timeframe);
 
-  // 1. Fetch Publication Trends from PostgreSQL via trends.service
-  const trendsResult = await getPublicationTrends({
-    subject_area: mappedDomain,
-    from_year,
-    to_year
-  });
+  // Run all 5 complex analysis modules in parallel to minimize response latency
+  const [publicationTrend, citationMirroring, topicEvolution, frontierDetection, forecastInsights] = await Promise.all([
+    // Module 1: Publication Trends (PostgreSQL)
+    (async () => {
+      const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
+      const trendsResult = await getPublicationTrends({
+        project_id: hasProject ? resolvedProjectId : null,
+        subject_category: isFilterCategoryActive ? subject_category : null,
+        subject_area: isFilterCategoryActive ? null : (mappedDomain === 'all' ? null : mappedDomain),
+        from_year,
+        to_year
+      });
 
-  const yearsRange = [];
-  for (let y = from_year; y <= to_year; y++) {
-    yearsRange.push(y);
-  }
+      const yearsRange = [];
+      for (let y = from_year; y <= to_year; y++) {
+        yearsRange.push(y);
+      }
 
-  const publicationTrendData = yearsRange.map(year => {
-    // Locate year index in trendsResult.timeline
-    const idx = trendsResult.timeline ? trendsResult.timeline.indexOf(String(year)) : -1;
-    const value = idx !== -1 && trendsResult.series && trendsResult.series[0]
-      ? trendsResult.series[0].data[idx]
-      : 0;
-    return { year, value };
-  });
+      const publicationTrendData = yearsRange.map(year => {
+        const idx = trendsResult.timeline ? trendsResult.timeline.indexOf(String(year)) : -1;
+        const value = idx !== -1 && trendsResult.series && trendsResult.series[0]
+          ? trendsResult.series[0].data[idx]
+          : 0;
+        return { year, value };
+      });
 
-  // Calculate YoY growth rate between last two years in timeline
-  let growthRate = 0;
-  if (publicationTrendData.length >= 2) {
-    const currentVal = publicationTrendData[publicationTrendData.length - 1].value;
-    const previousVal = publicationTrendData[publicationTrendData.length - 2].value;
-    growthRate = calcGrowthRate(currentVal, previousVal);
-  }
+      let growthRate = 0;
+      if (publicationTrendData.length >= 2) {
+        const currentVal = publicationTrendData[publicationTrendData.length - 1].value;
+        const previousVal = publicationTrendData[publicationTrendData.length - 2].value;
+        growthRate = calcGrowthRate(currentVal, previousVal);
+      }
 
-  const publicationTrend = {
-    growthRate,
-    unit: 'YoY',
-    data: publicationTrendData
-  };
+      return {
+        growthRate,
+        unit: 'YoY',
+        data: publicationTrendData
+      };
+    })(),
 
-  // 2. Fetch Citation Mirroring from Neo4j (Self vs External citations)
-  const mirroringMap = {};
-  for (let y = from_year; y <= to_year; y++) {
-    mirroringMap[y] = { year: y, external: 0, self: 0 };
-  }
+    // Module 2: Citation Mirroring (Neo4j Graph Database)
+    (async () => {
+      const mirroringMap = {};
+      for (let y = from_year; y <= to_year; y++) {
+        mirroringMap[y] = { year: y, external: 0, self: 0 };
+      }
 
-  const neo4jSession = neo4jDriver.session({ defaultAccessMode: 'READ' });
-  try {
-    let cypher = `
-      MATCH (a:Article)-[r:REFERENCES]->(b:Article)
-      WHERE coalesce(a.is_deleted, false) = false AND coalesce(b.is_deleted, false) = false
-        AND a.publication_year IS NOT NULL
-        AND toInteger(a.publication_year) >= $fromYear
-        AND toInteger(a.publication_year) <= $toYear
-    `;
+      const neo4jSession = neo4jDriver.session({ defaultAccessMode: 'READ' });
+      try {
+        let cypher = `
+          MATCH (a:Article)-[r:REFERENCES]->(b:Article)
+          WHERE coalesce(a.is_deleted, false) = false AND coalesce(b.is_deleted, false) = false
+            AND a.publication_year IS NOT NULL
+            AND toInteger(a.publication_year) >= $fromYear
+            AND toInteger(a.publication_year) <= $toYear
+        `;
 
-    const cypherParams = {
-      fromYear: from_year,
-      toYear: to_year,
-      topicNames: topicNames
-    };
+        const cypherParams = {
+          fromYear: from_year,
+          toYear: to_year,
+          topicNames: topicNames
+        };
 
-    if (mappedDomain && mappedDomain !== 'all') {
-      cypher += `
-        AND EXISTS {
-          MATCH (a)-[:HAS_TOPIC]->(t:Topic)
-          WHERE t.name IN $topicNames
+        if (mappedDomain && mappedDomain !== 'all') {
+          cypher += `
+            AND EXISTS {
+              MATCH (a)-[:HAS_TOPIC]->(t:Topic)
+              WHERE t.name IN $topicNames
+            }
+          `;
         }
-      `;
-    }
 
-    cypher += `
-      WITH a, b
-      WITH a.publication_year AS year, EXISTS { (a)<-[:WRITES]-(:Author)-[:WRITES]->(b) } AS isSelf
-      RETURN toInteger(year) AS year,
-             sum(CASE WHEN isSelf THEN 1 ELSE 0 END) AS self,
-             sum(CASE WHEN NOT isSelf THEN 1 ELSE 0 END) AS external
-      ORDER BY year ASC
-    `;
+        cypher += `
+          WITH a, b
+          WITH a.publication_year AS year, EXISTS { (a)<-[:WRITES]-(:Author)-[:WRITES]->(b) } AS isSelf
+          RETURN toInteger(year) AS year,
+                 sum(CASE WHEN isSelf THEN 1 ELSE 0 END) AS self,
+                 sum(CASE WHEN NOT isSelf THEN 1 ELSE 0 END) AS external
+          ORDER BY year ASC
+        `;
 
-    const result = await neo4jSession.run(cypher, cypherParams);
-    result.records.forEach(record => {
-      const year = record.get('year').toNumber();
-      if (mirroringMap[year]) {
-        mirroringMap[year].self = record.get('self').toNumber();
-        mirroringMap[year].external = record.get('external').toNumber();
+        const result = await neo4jSession.run(cypher, cypherParams);
+        result.records.forEach(record => {
+          const year = record.get('year').toNumber();
+          if (mirroringMap[year]) {
+            mirroringMap[year].self = record.get('self').toNumber();
+            mirroringMap[year].external = record.get('external').toNumber();
+          }
+        });
+      } catch (err) {
+        console.error('Error fetching citation mirroring data from Neo4j:', err);
+      } finally {
+        await neo4jSession.close();
       }
-    });
-  } catch (err) {
-    console.error('Error fetching citation mirroring data from Neo4j:', err);
-  } finally {
-    await neo4jSession.close();
-  }
 
-  const citationMirroring = {
-    data: Object.values(mirroringMap)
-  };
+      return {
+        data: Object.values(mirroringMap)
+      };
+    })(),
 
-  // 3. Fetch Topic Evolution from PostgreSQL
-  // Top 3 Topics of the Domain (or overall if no domain)
-  let topicEvolutionData = [];
-  try {
-    let topTopicsRes;
-    if (mappedDomain && mappedDomain !== 'all') {
-      topTopicsRes = await pool.query(
-        `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
-         FROM "Topic" t
-         JOIN "Article" a ON a.primary_topic = t.topic_id
-         JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-         JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-         WHERE LOWER(sa.display_name) = LOWER($1) AND coalesce(a.is_deleted, false) = false
-         GROUP BY t.topic_id, t.display_name
-         ORDER BY cnt DESC
-         LIMIT 3`,
-        [mappedDomain]
-      );
-    } else {
-      topTopicsRes = await pool.query(
-        `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
-         FROM "Topic" t
-         JOIN "Article" a ON a.primary_topic = t.topic_id
-         WHERE coalesce(a.is_deleted, false) = false
-         GROUP BY t.topic_id, t.display_name
-         ORDER BY cnt DESC
-         LIMIT 3`
-      );
-    }
-
-    const topicsList = topTopicsRes.rows;
-    const totalArticlesRes = await pool.query(
-      `SELECT count(article_id) as total FROM "Article" WHERE coalesce(is_deleted, false) = false`
-    );
-    const totalArticles = parseInt(totalArticlesRes.rows[0]?.total || 1, 10);
-
-    const topicsData = [];
-    const DOMAIN_STATUSES = ['Expanding', 'Stable', 'Emerging'];
-
-    for (let i = 0; i < topicsList.length; i++) {
-      const topic = topicsList[i];
-      const percent = totalArticles > 0 ? Math.round((parseInt(topic.cnt, 10) / totalArticles) * 100) : 0;
-
-      // Count articles per year for this topic
-      const countsRes = await pool.query(
-        `SELECT publication_year, count(article_id) as val
-         FROM "Article"
-         WHERE primary_topic = $1 AND coalesce(is_deleted, false) = false
-           AND publication_year IS NOT NULL
-           AND publication_year >= $2
-           AND publication_year <= $3
-         GROUP BY publication_year`,
-        [topic.topic_id, from_year, to_year]
-      );
-
-      const countsMap = {};
-      countsRes.rows.forEach(r => {
-        countsMap[parseInt(r.publication_year, 10)] = parseInt(r.val, 10);
-      });
-
-      const topicYearData = yearsRange.map(year => ({
-        year,
-        value: countsMap[year] || 0
-      }));
-
-      topicsData.push({
-        name: topic.name,
-        domain: DOMAIN_STATUSES[i % DOMAIN_STATUSES.length],
-        percentage: percent,
-        data: topicYearData
-      });
-    }
-
-    topicEvolutionData = topicsData;
-  } catch (err) {
-    console.error('Error fetching topic evolution data:', err);
-  }
-
-  const topicEvolution = {
-    topics: topicEvolutionData
-  };
-
-  // 4. Fetch Frontier Topics
-  let frontierDetectionItems = [];
-  try {
-    const rawFrontier = await getFrontierTopics({
-      topicNames: topicNames,
-    });
-    frontierDetectionItems = (rawFrontier || []).map(item => ({
-      label: item.topic,
-      impactVelocity: item.impactFactor,
-      citationVelocity: item.citationVelocity,
-      status: String(item.status).toLowerCase()
-    }));
-  } catch (err) {
-    console.error('Error calling getFrontierTopics:', err);
-  }
-
-  const frontierDetection = {
-    items: frontierDetectionItems
-  };
-
-  // 5. Fetch Forecast Insights
-  let forecastInsights = [];
-  try {
-    const projectRes = await pool.query('SELECT project_id FROM "Project" LIMIT 1');
-    let projectId = null;
-    if (projectRes.rows.length > 0) {
-      projectId = projectRes.rows[0].project_id;
-    }
-
-    if (projectId) {
-      const rawForecast = await getForecastInsights(projectId);
-      forecastInsights = formatForecastInsights(rawForecast, mappedDomain);
-    } else {
-      throw new Error('No project found in database to calculate forecast');
-    }
-  } catch (err) {
-    // Fallback static insights
-    const capitalizedDomain = mappedDomain ? mappedDomain.charAt(0).toUpperCase() + mappedDomain.slice(1) : 'Biochemistry';
-    forecastInsights = [
-      {
-        id: 'peak',
-        type: 'predictive_peak',
-        accent: 'growth',
-        title: 'Predictive Peak',
-        description: `${capitalizedDomain} is projected to reach its citation apex in Q3 2027 based on current velocity.`
-      },
-      {
-        id: 'saturation',
-        type: 'saturation_alert',
-        accent: 'warning',
-        title: 'Saturation Alert',
-        description: 'Citation velocity for basic molecular modeling shows signs of plateauing in early 2026.'
-      },
-      {
-        id: 'synergy',
-        type: 'cross_domain_synergy',
-        accent: 'innovation',
-        title: 'Cross-Domain Synergy',
-        description: `High probability of breakthrough convergence between ${capitalizedDomain} and Neural Networks.`
+    // Module 3: Topic Evolution (PostgreSQL)
+    (async () => {
+      const yearsRange = [];
+      for (let y = from_year; y <= to_year; y++) {
+        yearsRange.push(y);
       }
-    ];
-  }
 
-  return {
+      let topicEvolutionData = [];
+      try {
+        let topTopicsRes;
+        const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
+        if (hasProject && projectCategoryIds && projectCategoryIds.length > 0) {
+          topTopicsRes = await pool.query(
+            `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
+             FROM "Topic" t
+             JOIN "Article" a ON a.primary_topic = t.topic_id
+             WHERE t.subject_category_id = ANY($1::bigint[]) AND coalesce(a.is_deleted, false) = false
+             GROUP BY t.topic_id, t.display_name
+             ORDER BY cnt DESC
+             LIMIT 3`,
+            [projectCategoryIds]
+          );
+        } else if (mappedDomain && mappedDomain !== 'all') {
+          topTopicsRes = await pool.query(
+            `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
+             FROM "Topic" t
+             JOIN "Article" a ON a.primary_topic = t.topic_id
+             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+             WHERE LOWER(sa.display_name) = LOWER($1) AND coalesce(a.is_deleted, false) = false
+             GROUP BY t.topic_id, t.display_name
+             ORDER BY cnt DESC
+             LIMIT 3`,
+            [mappedDomain]
+          );
+        } else {
+          topTopicsRes = await pool.query(
+            `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
+             FROM "Topic" t
+             JOIN "Article" a ON a.primary_topic = t.topic_id
+             WHERE coalesce(a.is_deleted, false) = false
+             GROUP BY t.topic_id, t.display_name
+             ORDER BY cnt DESC
+             LIMIT 3`
+          );
+        }
+
+        const topicsList = topTopicsRes.rows;
+        const totalArticlesRes = await pool.query(
+          `SELECT count(article_id) as total FROM "Article" WHERE coalesce(is_deleted, false) = false`
+        );
+        const totalArticles = parseInt(totalArticlesRes.rows[0]?.total || 1, 10);
+
+        const topicsData = [];
+        const DOMAIN_STATUSES = ['Expanding', 'Stable', 'Emerging'];
+
+        for (let i = 0; i < topicsList.length; i++) {
+          const topic = topicsList[i];
+          const percent = totalArticles > 0 ? Math.round((parseInt(topic.cnt, 10) / totalArticles) * 100) : 0;
+
+          // Count articles per year for this topic
+          const countsRes = await pool.query(
+            `SELECT publication_year, count(article_id) as val
+             FROM "Article"
+             WHERE primary_topic = $1 AND coalesce(is_deleted, false) = false
+               AND publication_year IS NOT NULL
+               AND publication_year >= $2
+               AND publication_year <= $3
+             GROUP BY publication_year`,
+            [topic.topic_id, from_year, to_year]
+          );
+
+          const countsMap = {};
+          countsRes.rows.forEach(r => {
+            countsMap[parseInt(r.publication_year, 10)] = parseInt(r.val, 10);
+          });
+
+          const topicYearData = yearsRange.map(year => ({
+            year,
+            value: countsMap[year] || 0
+          }));
+
+          topicsData.push({
+            name: topic.name,
+            domain: DOMAIN_STATUSES[i % DOMAIN_STATUSES.length],
+            percentage: percent,
+            data: topicYearData
+          });
+        }
+
+        topicEvolutionData = topicsData;
+      } catch (err) {
+        console.error('Error fetching topic evolution data:', err);
+      }
+
+      return {
+        topics: topicEvolutionData
+      };
+    })(),
+
+    // Module 4: Frontier Detection (Neo4j Graph Database)
+    (async () => {
+      let frontierDetectionItems = [];
+      try {
+        const rawFrontier = await getFrontierTopics({
+          topicNames: topicNames,
+        });
+        frontierDetectionItems = (rawFrontier || []).map(item => ({
+          label: item.topic,
+          impactVelocity: item.impactFactor,
+          citationVelocity: item.citationVelocity,
+          status: String(item.status).toLowerCase()
+        }));
+      } catch (err) {
+        console.error('Error calling getFrontierTopics:', err);
+      }
+
+      return {
+        items: frontierDetectionItems
+      };
+    })(),
+
+    // Module 5: Forecast Insights (PostgreSQL / Neo4j)
+    (async () => {
+      let forecastInsightsData = [];
+      try {
+        if (resolvedProjectId) {
+          const rawForecast = await getForecastInsights(resolvedProjectId);
+          forecastInsightsData = formatForecastInsights(rawForecast, mappedDomain);
+        } else {
+          throw new Error('No project found in database to calculate forecast');
+        }
+      } catch (err) {
+        // Fallback static insights
+        const capitalizedDomain = mappedDomain ? mappedDomain.charAt(0).toUpperCase() + mappedDomain.slice(1) : 'Biochemistry';
+        forecastInsightsData = [
+          {
+            id: 'peak',
+            type: 'predictive_peak',
+            accent: 'growth',
+            title: 'Predictive Peak',
+            description: `${capitalizedDomain} is projected to reach its citation apex in Q3 2027 based on current velocity.`
+          },
+          {
+            id: 'saturation',
+            type: 'saturation_alert',
+            accent: 'warning',
+            title: 'Saturation Alert',
+            description: 'Citation velocity for basic molecular modeling shows signs of plateauing in early 2026.'
+          },
+          {
+            id: 'synergy',
+            type: 'cross_domain_synergy',
+            accent: 'innovation',
+            title: 'Cross-Domain Synergy',
+            description: `High probability of breakthrough convergence between ${capitalizedDomain} and Neural Networks.`
+          }
+        ];
+      }
+
+      return forecastInsightsData;
+    })()
+  ]);
+
+  const responseData = {
     publicationTrend,
     citationMirroring,
     topicEvolution,
     frontierDetection,
     forecastInsights
   };
+
+  // Cache the combined response in Redis for 5 minutes (300 seconds)
+  try {
+    await redisSet(cacheKey, JSON.stringify(responseData), 300);
+    console.log(`[Redis] Development trends cached: ${cacheKey}`);
+  } catch (err) {
+    console.warn('Failed to set development trends in Redis:', err);
+  }
+
+  return responseData;
+}
+
+export async function getProjectCategories(projectId) {
+  const client = await pool.connect();
+  try {
+    let subjectAreaId = null;
+    if (projectId && projectId !== 'undefined' && projectId !== 'null') {
+      const projectRes = await client.query(
+        `SELECT subject_area FROM "Project" WHERE project_id = $1`,
+        [projectId]
+      );
+      if (projectRes.rows.length > 0) {
+        subjectAreaId = projectRes.rows[0].subject_area;
+      }
+    }
+
+    // Fallback to first project's subject area if no project_id provided
+    if (!subjectAreaId) {
+      const fallbackRes = await client.query(
+        `SELECT subject_area FROM "Project" LIMIT 1`
+      );
+      if (fallbackRes.rows.length > 0) {
+        subjectAreaId = fallbackRes.rows[0].subject_area;
+      }
+    }
+
+    if (!subjectAreaId) {
+      return { subjectArea: null, categories: [] };
+    }
+
+    const saRes = await client.query(
+      `SELECT display_name FROM "Subject_Area" WHERE subject_area_id = $1`,
+      [subjectAreaId]
+    );
+    const subjectAreaName = saRes.rows.length > 0 ? saRes.rows[0].display_name : '';
+
+    const categoriesRes = await client.query(
+      `SELECT subject_category_id AS id, display_name AS name 
+       FROM "Subject_Category" 
+       WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false
+       ORDER BY display_name ASC`,
+      [subjectAreaId]
+    );
+
+    return {
+      subjectArea: {
+        id: Number(subjectAreaId),
+        name: subjectAreaName,
+      },
+      categories: categoriesRes.rows,
+    };
+  } finally {
+    client.release();
+  }
 }

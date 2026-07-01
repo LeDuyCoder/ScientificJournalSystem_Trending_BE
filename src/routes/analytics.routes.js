@@ -26,7 +26,7 @@ import {
   fetchGeoDistribution,
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking, 
+  fetchJournalRanking,
   fetchCountryCollaborationChord,
   fetchTopicIntensityMatrix,
   fetchRankings,
@@ -1137,27 +1137,49 @@ router.get('/matrix/intensity', fetchTopicIntensityMatrix);
  *     summary: Lấy dữ liệu xu hướng phát triển khoa học công nghệ (Development Trends)
  *     description: >
  *       Trả về dữ liệu phân tích xu hướng phát triển tích hợp bao gồm:
- *       Xu hướng công bộ bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring - tự trích dẫn và trích dẫn ngoài),
- *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection), và Các dự báo tương lai (forecastInsights).
+ *       Xu hướng công bố bài báo (publicationTrend), Gương phản chiếu trích dẫn (citationMirroring),
+ *       Sự tiến hóa của các chủ đề (topicEvolution), Các chủ đề tiên phong (frontierDetection),
+ *       và Các dự báo tương lai (forecastInsights).
+ *       Hỗ trợ lọc động theo subject_category — không cần code cứng tên lĩnh vực.
  *     tags:
  *       - Analytics
  *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         description: 'ID của project. Nếu cung cấp, hệ thống sẽ tự động xác định Subject Area và phạm vi phân tích.'
+ *         example: '2'
  *       - in: query
  *         name: timeframe
  *         schema:
  *           type: string
  *           default: 'Last 5 Years'
- *         description: 'Khung thời gian để phân tích (Ví dụ: Last 5 Years, Last 10 Years).'
+ *           enum:
+ *             - 'Last Year'
+ *             - 'Last 3 Years'
+ *             - 'Last 5 Years'
+ *             - 'Last 10 Years'
+ *         description: 'Khung thời gian để phân tích.'
+ *         example: 'Last 5 Years'
+ *       - in: query
+ *         name: subject_category
+ *         schema:
+ *           type: string
+ *         description: >
+ *           Tên Subject Category để lọc phân tích (lấy từ API /analytics/subject-categories).
+ *           Truyền "All Categories" hoặc bỏ trống để xem tất cả danh mục.
+ *         example: 'Artificial Intelligence'
  *       - in: query
  *         name: domain
  *         schema:
  *           type: string
- *         description: 'Lĩnh vực nghiên cứu (Ví dụ: Computer Science, Biochemistry, Medicine, Environmental Science).'
+ *         description: '(Legacy) Tên Subject Area. Ưu tiên dùng subject_category thay thế.'
  *       - in: query
  *         name: region
  *         schema:
  *           type: string
- *         description: 'Khu vực địa lý hoặc quốc gia (Tùy chọn lọc).'
+ *         description: 'Khu vực địa lý (tùy chọn lọc). Ví dụ: Global Distribution, North America.'
  *     responses:
  *       200:
  *         description: Lấy dữ liệu phân tích xu hướng phát triển thành công

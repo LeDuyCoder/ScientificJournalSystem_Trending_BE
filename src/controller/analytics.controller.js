@@ -23,6 +23,7 @@ import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
 
+
 const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
   entity_type: z
@@ -252,7 +253,7 @@ export async function fetchForecast(req, res, next) {
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
-       return res.status(statusCode).json({
+      return res.status(statusCode).json({
         code: statusCode,
         message: err.message,
         data: null,
