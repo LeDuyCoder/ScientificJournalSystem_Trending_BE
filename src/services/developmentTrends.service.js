@@ -111,6 +111,7 @@ export async function getDevelopmentTrends(query = {}) {
   // Map hardcoded frontend domain names to the actual database Subject Areas
   const mapDomainToDb = (dom) => {
     const d = String(dom || '').trim().toLowerCase();
+    if (d === 'all domains' || d === 'all' || d === '') return 'all';
     if (d === 'biological sciences') return 'Biochemistry';
     if (d === 'medical research') return 'Medicine';
     if (d === 'computer science') return 'Computer Science';
@@ -139,15 +140,20 @@ export async function getDevelopmentTrends(query = {}) {
         const scope = await getProjectScope(client, resolvedProjectId);
         mappedDomain = domain ? mapDomainToDb(domain) : scope.subjectAreaName;
         if (domain && String(domain).trim().toLowerCase() !== String(scope.subjectAreaName).trim().toLowerCase()) {
-          const topicsRes = await client.query(
-            `SELECT DISTINCT t.display_name
-             FROM "Topic" t
-             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-             WHERE LOWER(sa.display_name) = LOWER($1)`,
-            [mappedDomain]
-          );
-          topicNames = topicsRes.rows.map(r => r.display_name);
+          if (mappedDomain === 'all') {
+            topicNames = [];
+            projectCategoryIds = [];
+          } else {
+            const topicsRes = await client.query(
+              `SELECT DISTINCT t.display_name
+               FROM "Topic" t
+               JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+               JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+               WHERE LOWER(sa.display_name) = LOWER($1)`,
+              [mappedDomain]
+            );
+            topicNames = topicsRes.rows.map(r => r.display_name);
+          }
         } else {
           topicNames = scope.keywordNames;
           projectCategoryIds = scope.subjectCategoryIds;
@@ -180,9 +186,10 @@ export async function getDevelopmentTrends(query = {}) {
   const [publicationTrend, citationMirroring, topicEvolution, frontierDetection, forecastInsights] = await Promise.all([
     // Module 1: Publication Trends (PostgreSQL)
     (async () => {
+      const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
       const trendsResult = await getPublicationTrends({
-        project_id: resolvedProjectId,
-        subject_area: mappedDomain,
+        project_id: hasProject ? resolvedProjectId : null,
+        subject_area: mappedDomain === 'all' ? null : mappedDomain,
         from_year,
         to_year
       });
@@ -284,7 +291,8 @@ export async function getDevelopmentTrends(query = {}) {
       let topicEvolutionData = [];
       try {
         let topTopicsRes;
-        if (projectCategoryIds && projectCategoryIds.length > 0) {
+        const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
+        if (hasProject && projectCategoryIds && projectCategoryIds.length > 0) {
           topTopicsRes = await pool.query(
             `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
              FROM "Topic" t
