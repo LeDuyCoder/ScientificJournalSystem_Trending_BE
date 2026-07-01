@@ -14,7 +14,8 @@ import {
   getJournalRankingSchema,
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
   getNetworkTopologySchema,
-  getDevelopmentTrendsSchema
+  getDevelopmentTrendsSchema,
+  getSubjectCategoriesSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -34,7 +35,8 @@ import {
   fetchNetworkTopology,
   fetchKeywordVectors,
   fetchCollaborationNetwork,
-  fetchDevelopmentTrends
+  fetchDevelopmentTrends,
+  fetchProjectSubjectCategories
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1284,6 +1286,102 @@ router.get('/matrix/intensity', fetchTopicIntensityMatrix);
  *         description: Lỗi hệ thống hoặc lỗi cơ sở dữ liệu
  */
 router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fetchDevelopmentTrends);
+
+/**
+ * @openapi
+ * /analytics/subject-categories:
+ *   get:
+ *     summary: Lấy danh sách các subject category liên quan tới project
+ *     description: Trả về danh sách các subject category trực thuộc subject area mà project quan tâm, hỗ trợ phân trang và tìm kiếm theo tên.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: ID của project
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Trang số (từ 1 trở đi)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Số lượng bản ghi trên một trang (tối đa 100)
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm gần đúng theo display_name của subject category
+ *     responses:
+ *       200:
+ *         description: Lấy danh sách thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch project subject categories successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     subject_area:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                           example: 1
+ *                         name:
+ *                           type: string
+ *                           example: 'Life Sciences'
+ *                     items:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           subject_category_id:
+ *                             type: integer
+ *                             example: 101
+ *                           display_name:
+ *                             type: string
+ *                             example: 'Biochemistry'
+ *                           description:
+ *                             type: string
+ *                             example: 'Study of chemical processes within living organisms'
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 10
+ *                         total:
+ *                           type: integer
+ *                           example: 25
+ *                         total_pages:
+ *                           type: integer
+ *                           example: 3
+ *       400:
+ *         description: Tham số yêu cầu không hợp lệ
+ *       404:
+ *         description: Không tìm thấy project hoặc project chưa gán subject area
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.get('/subject-categories', validateQuery(getSubjectCategoriesSchema), fetchProjectSubjectCategories);
 
 
 export default router;
