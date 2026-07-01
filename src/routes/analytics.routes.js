@@ -14,7 +14,8 @@ import {
   getJournalRankingSchema,
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
   getNetworkTopologySchema,
-  getDevelopmentTrendsSchema
+  getDevelopmentTrendsSchema,
+  getSubjectCategoriesSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -25,7 +26,7 @@ import {
   fetchGeoDistribution,
   fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
-  fetchJournalRanking, 
+  fetchJournalRanking,
   fetchCountryCollaborationChord,
   fetchTopicIntensityMatrix,
   fetchRankings,
@@ -35,7 +36,7 @@ import {
   fetchKeywordVectors,
   fetchCollaborationNetwork,
   fetchDevelopmentTrends,
-  fetchProjectCategories
+  fetchProjectSubjectCategories
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1312,13 +1313,8 @@ router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fet
  * @openapi
  * /analytics/subject-categories:
  *   get:
- *     summary: Lấy danh sách Subject Category của một Project
- *     description: >
- *       Trả về danh sách các Subject Category thuộc Subject Area của project được chỉ định.
- *       Kết quả được dùng để render bộ lọc danh mục động trên giao diện, thay thế hoàn toàn
- *       cho danh sách lĩnh vực bị code cứng trước đây.
- *       Nếu không cung cấp project_id, hệ thống sẽ tự động lấy Subject Area của project đầu tiên
- *       trong cơ sở dữ liệu.
+ *     summary: Lấy danh sách các subject category liên quan tới project
+ *     description: Trả về danh sách các subject category trực thuộc subject area mà project quan tâm, hỗ trợ phân trang và tìm kiếm theo tên.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -1326,12 +1322,28 @@ router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fet
  *         name: project_id
  *         schema:
  *           type: string
- *         required: false
- *         description: 'ID của project cần lấy danh mục. Nếu bỏ qua, dùng project đầu tiên làm fallback.'
- *         example: '2'
+ *         required: true
+ *         description: ID của project
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Trang số (từ 1 trở đi)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Số lượng bản ghi trên một trang (tối đa 100)
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm gần đúng theo display_name của subject category
  *     responses:
  *       200:
- *         description: Lấy danh sách Subject Category thành công
+ *         description: Lấy danh sách thành công
  *         content:
  *           application/json:
  *             schema:
@@ -1344,22 +1356,54 @@ router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fet
  *                   type: string
  *                   example: Fetch project subject categories successfully
  *                 data:
- *                   type: array
- *                   description: 'Danh sách các Subject Category. Dùng giá trị "name" để truyền vào subject_category của /analytics/development-trends.'
- *                   items:
- *                     type: object
- *                     properties:
- *                       id:
- *                         type: string
- *                         description: 'ID của Subject Category trong database'
- *                         example: '701'
- *                       name:
- *                         type: string
- *                         description: 'Tên hiển thị của Subject Category — dùng làm giá trị filter'
- *                         example: 'Human-Computer Interaction'
+ *                   type: object
+ *                   properties:
+ *                     subject_area:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                           example: 1
+ *                         name:
+ *                           type: string
+ *                           example: 'Life Sciences'
+ *                     items:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           subject_category_id:
+ *                             type: integer
+ *                             example: 101
+ *                           display_name:
+ *                             type: string
+ *                             example: 'Biochemistry'
+ *                           description:
+ *                             type: string
+ *                             example: 'Study of chemical processes within living organisms'
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 10
+ *                         total:
+ *                           type: integer
+ *                           example: 25
+ *                         total_pages:
+ *                           type: integer
+ *                           example: 3
+ *       400:
+ *         description: Tham số yêu cầu không hợp lệ
+ *       404:
+ *         description: Không tìm thấy project hoặc project chưa gán subject area
  *       500:
- *         description: Lỗi hệ thống hoặc lỗi cơ sở dữ liệu
+ *         description: Lỗi hệ thống
  */
-router.get('/subject-categories', fetchProjectCategories);
+router.get('/subject-categories', validateQuery(getSubjectCategoriesSchema), fetchProjectSubjectCategories);
+
 
 export default router;

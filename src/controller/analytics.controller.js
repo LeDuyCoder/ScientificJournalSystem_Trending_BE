@@ -253,7 +253,7 @@ export async function fetchForecast(req, res, next) {
   } catch (err) {
     const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
     if (statusCode !== 500) {
-       return res.status(statusCode).json({
+      return res.status(statusCode).json({
         code: statusCode,
         message: err.message,
         data: null,
@@ -760,21 +760,6 @@ export async function fetchDevelopmentTrends(req, res, next) {
     });
   } catch (err) {
     console.error('Error in fetchDevelopmentTrends:', err);
-    next(err);
-  }
-}
-
-export async function fetchProjectCategories(req, res, next) {
-  try {
-    const { project_id } = req.query;
-    const data = await getProjectCategories(project_id);
-    res.json({
-      code: 200,
-      message: 'Fetch project subject categories successfully',
-      data
-    });
-  } catch (err) {
-    console.error('Error in fetchProjectCategories:', err);
     next(err);
   }
 }

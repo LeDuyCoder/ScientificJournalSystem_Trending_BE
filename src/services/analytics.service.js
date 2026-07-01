@@ -184,3 +184,123 @@ export async function getTopEntities(filters) {
     client.release();
   }
 }
+
+/**
+ * Lấy danh sách Subject Categories của một project (thông qua subject area).
+ * Hỗ trợ phân trang và tìm kiếm theo tên.
+ * @param {object} filters
+ * @param {string} filters.projectId - ID của project.
+ * @param {number} [filters.page=1] - Trang hiện tại.
+ * @param {number} [filters.limit=10] - Số lượng bản ghi mỗi trang.
+ * @param {string} [filters.search] - Từ khóa tìm kiếm theo display_name.
+ * @returns {Promise<{items: Array, pagination: object}>}
+ */
+export async function getProjectSubjectCategories(filters) {
+  const { projectId, page = 1, limit = 10, search } = filters;
+  const offset = (page - 1) * limit;
+
+  // --- Caching Logic ---
+  const cacheKeyParts = [
+    'analytics:subject-categories',
+    `project:${projectId}`,
+    `page:${page}`,
+    `limit:${limit}`,
+  ];
+  if (search) cacheKeyParts.push(`search:${search}`);
+  const cacheKey = cacheKeyParts.join(':');
+
+  try {
+    const cachedData = await redisGet(cacheKey);
+    if (cachedData) {
+      logger.info(`[Redis] Cache hit for subject categories: ${cacheKey}`);
+      return JSON.parse(cachedData);
+    }
+    logger.info(`[Redis] Cache miss for subject categories: ${cacheKey}`);
+  } catch (err) {
+    logger.warn('Failed to get subject categories from Redis, querying database:', err?.message || err);
+  }
+
+  const client = await pool.connect();
+  try {
+    // 1. Lấy subject_area_id của project
+    const projectRes = await client.query(
+      `SELECT p.project_id, p.subject_area, sa.display_name AS subject_area_name
+       FROM "Project" p
+       JOIN "Subject_Area" sa ON p.subject_area = sa.subject_area_id
+       WHERE p.project_id = $1
+         AND COALESCE(sa.is_deleted, false) = false`,
+      [projectId]
+    );
+
+    if (projectRes.rows.length === 0) {
+      const err = new Error('Project not found or has no associated subject area');
+      err.status = 404;
+      throw err;
+    }
+
+    const { subject_area: subjectAreaId, subject_area_name: subjectAreaName } = projectRes.rows[0];
+
+    // 2. Build dynamic WHERE clause
+    const params = [subjectAreaId];
+    const whereClauses = [
+      `subject_area_id = $1`,
+      `COALESCE(is_deleted, false) = false`,
+    ];
+
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      whereClauses.push(`LOWER(display_name) LIKE $${params.length}`);
+    }
+
+    const whereSQL = whereClauses.join(' AND ');
+
+    // 3. Count total
+    const countRes = await client.query(
+      `SELECT COUNT(*) AS total FROM "Subject_Category" WHERE ${whereSQL}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].total, 10);
+
+    // 4. Fetch paginated items
+    params.push(limit);
+    params.push(offset);
+    const itemsRes = await client.query(
+      `SELECT subject_category_id, display_name, description
+       FROM "Subject_Category"
+       WHERE ${whereSQL}
+       ORDER BY display_name ASC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const result = {
+      subject_area: {
+        id: Number(subjectAreaId),
+        name: subjectAreaName,
+      },
+      items: itemsRes.rows.map(row => ({
+        subject_category_id: Number(row.subject_category_id),
+        display_name: row.display_name,
+        description: row.description || null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: Math.ceil(total / limit),
+      },
+    };
+
+    // --- Save to cache ---
+    try {
+      await redisSet(cacheKey, JSON.stringify(result), CACHE_TTL);
+      logger.info(`[Redis] Subject categories cached: ${cacheKey}`);
+    } catch (err) {
+      logger.warn('Failed to set subject categories in Redis cache:', err?.message || err);
+    }
+
+    return result;
+  } finally {
+    client.release();
+  }
+}
