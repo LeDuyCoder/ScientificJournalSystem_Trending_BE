@@ -554,8 +554,14 @@ export async function getProjectCategories(projectId) {
     }
 
     if (!subjectAreaId) {
-      return [];
+      return { subjectArea: null, categories: [] };
     }
+
+    const saRes = await client.query(
+      `SELECT display_name FROM "Subject_Area" WHERE subject_area_id = $1`,
+      [subjectAreaId]
+    );
+    const subjectAreaName = saRes.rows.length > 0 ? saRes.rows[0].display_name : '';
 
     const categoriesRes = await client.query(
       `SELECT subject_category_id AS id, display_name AS name 
@@ -565,7 +571,13 @@ export async function getProjectCategories(projectId) {
       [subjectAreaId]
     );
 
-    return categoriesRes.rows;
+    return {
+      subjectArea: {
+        id: Number(subjectAreaId),
+        name: subjectAreaName,
+      },
+      categories: categoriesRes.rows,
+    };
   } finally {
     client.release();
   }

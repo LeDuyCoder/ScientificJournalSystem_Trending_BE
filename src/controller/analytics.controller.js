@@ -763,3 +763,48 @@ export async function fetchDevelopmentTrends(req, res, next) {
     next(err);
   }
 }
+
+export async function fetchProjectSubjectCategories(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const { subjectArea, categories } = await getProjectCategories(project_id);
+
+    const page = parseInt(req.validatedQuery.page, 10) || 1;
+    const limit = Math.min(parseInt(req.validatedQuery.limit, 10) || 10, 100);
+    const search = req.validatedQuery.search ? String(req.validatedQuery.search).trim().toLowerCase() : '';
+
+    let filtered = categories;
+    if (search) {
+      filtered = categories.filter(c => c.name.toLowerCase().includes(search));
+    }
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limit);
+    const start = (page - 1) * limit;
+    const items = filtered.slice(start, start + limit);
+
+    res.json({
+      code: 200,
+      message: 'Fetch project subject categories successfully',
+      data: {
+        subject_area: subjectArea,
+        items: items.map(c => ({
+          subject_category_id: c.id,
+          display_name: c.name,
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          total_pages: totalPages,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('Error in fetchProjectSubjectCategories:', err);
+    if (err.status) {
+      return res.status(err.status).json({ code: err.status, message: err.message, data: null });
+    }
+    next(err);
+  }
+}
