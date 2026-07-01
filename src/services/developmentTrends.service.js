@@ -2,7 +2,7 @@ import pool from '../config/database.js';
 import { neo4jDriver } from '../config/neo4j.js';
 import { getPublicationTrends } from './trends.service.js';
 import { getFrontierTopics } from './frontier.service.js';
-import { getForecastInsights } from './forecast.service.js';
+import { getForecastInsights, getProjectScope } from './forecast.service.js';
 
 function calcGrowthRate(current, previous) {
   if (!previous) return 0;
@@ -91,7 +91,7 @@ function formatForecastInsights(forecastData, domain) {
  * @returns {Promise<Object>} The aggregated development trends data.
  */
 export async function getDevelopmentTrends(query = {}) {
-  const { timeframe, domain, region } = query;
+  const { project_id, timeframe, domain, region } = query;
 
   // Map hardcoded frontend domain names to the actual database Subject Areas
   const mapDomainToDb = (dom) => {
@@ -103,29 +103,67 @@ export async function getDevelopmentTrends(query = {}) {
     return dom;
   };
 
-  const mappedDomain = mapDomainToDb(domain);
-
+  let resolvedProjectId = null;
+  let mappedDomain = null;
   let topicNames = [];
-  if (mappedDomain && mappedDomain !== 'all') {
-    try {
-      const topicsRes = await pool.query(
-        `SELECT DISTINCT t.display_name
-         FROM "Topic" t
-         JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-         JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-         WHERE LOWER(sa.display_name) = LOWER($1)`,
-        [mappedDomain]
-      );
-      topicNames = topicsRes.rows.map(r => r.display_name);
-    } catch (err) {
-      console.error('Error fetching topic names from postgres:', err);
+  let projectCategoryIds = [];
+
+  const client = await pool.connect();
+  try {
+    if (project_id && project_id !== 'undefined' && project_id !== 'null') {
+      resolvedProjectId = project_id;
+      const scope = await getProjectScope(client, project_id);
+      mappedDomain = scope.subjectAreaName;
+      topicNames = scope.keywordNames;
+      projectCategoryIds = scope.subjectCategoryIds;
+    } else {
+      // Fallback or global mode
+      const projectRes = await client.query('SELECT project_id FROM "Project" LIMIT 1');
+      if (projectRes.rows.length > 0) {
+        resolvedProjectId = projectRes.rows[0].project_id;
+        const scope = await getProjectScope(client, resolvedProjectId);
+        mappedDomain = domain ? mapDomainToDb(domain) : scope.subjectAreaName;
+        if (domain && String(domain).trim().toLowerCase() !== String(scope.subjectAreaName).trim().toLowerCase()) {
+          const topicsRes = await client.query(
+            `SELECT DISTINCT t.display_name
+             FROM "Topic" t
+             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+             WHERE LOWER(sa.display_name) = LOWER($1)`,
+            [mappedDomain]
+          );
+          topicNames = topicsRes.rows.map(r => r.display_name);
+        } else {
+          topicNames = scope.keywordNames;
+          projectCategoryIds = scope.subjectCategoryIds;
+        }
+      } else {
+        mappedDomain = mapDomainToDb(domain);
+        if (mappedDomain && mappedDomain !== 'all') {
+          const topicsRes = await client.query(
+            `SELECT DISTINCT t.display_name
+             FROM "Topic" t
+             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+             WHERE LOWER(sa.display_name) = LOWER($1)`,
+            [mappedDomain]
+          );
+          topicNames = topicsRes.rows.map(r => r.display_name);
+        }
+      }
     }
+  } catch (err) {
+    console.error('Error resolving project scope:', err);
+    mappedDomain = mapDomainToDb(domain);
+  } finally {
+    client.release();
   }
 
   const { from_year, to_year } = parseTimeframe(timeframe);
 
   // 1. Fetch Publication Trends from PostgreSQL via trends.service
   const trendsResult = await getPublicationTrends({
+    project_id: resolvedProjectId,
     subject_area: mappedDomain,
     from_year,
     to_year
@@ -222,7 +260,18 @@ export async function getDevelopmentTrends(query = {}) {
   let topicEvolutionData = [];
   try {
     let topTopicsRes;
-    if (mappedDomain && mappedDomain !== 'all') {
+    if (projectCategoryIds && projectCategoryIds.length > 0) {
+      topTopicsRes = await pool.query(
+        `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
+         FROM "Topic" t
+         JOIN "Article" a ON a.primary_topic = t.topic_id
+         WHERE t.subject_category_id = ANY($1::bigint[]) AND coalesce(a.is_deleted, false) = false
+         GROUP BY t.topic_id, t.display_name
+         ORDER BY cnt DESC
+         LIMIT 3`,
+        [projectCategoryIds]
+      );
+    } else if (mappedDomain && mappedDomain !== 'all') {
       topTopicsRes = await pool.query(
         `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
          FROM "Topic" t
@@ -322,14 +371,8 @@ export async function getDevelopmentTrends(query = {}) {
   // 5. Fetch Forecast Insights
   let forecastInsights = [];
   try {
-    const projectRes = await pool.query('SELECT project_id FROM "Project" LIMIT 1');
-    let projectId = null;
-    if (projectRes.rows.length > 0) {
-      projectId = projectRes.rows[0].project_id;
-    }
-
-    if (projectId) {
-      const rawForecast = await getForecastInsights(projectId);
+    if (resolvedProjectId) {
+      const rawForecast = await getForecastInsights(resolvedProjectId);
       forecastInsights = formatForecastInsights(rawForecast, mappedDomain);
     } else {
       throw new Error('No project found in database to calculate forecast');
