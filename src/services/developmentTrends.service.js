@@ -3,6 +3,7 @@ import { neo4jDriver } from '../config/neo4j.js';
 import { getPublicationTrends } from './trends.service.js';
 import { getFrontierTopics } from './frontier.service.js';
 import { getForecastInsights, getProjectScope } from './forecast.service.js';
+import { redisGet, redisSet } from './redis.service.js';
 
 function calcGrowthRate(current, previous) {
   if (!previous) return 0;
@@ -92,6 +93,20 @@ function formatForecastInsights(forecastData, domain) {
  */
 export async function getDevelopmentTrends(query = {}) {
   const { project_id, timeframe, domain, region } = query;
+
+  const cacheKey = `analytics:dev-trends:v2:${project_id || 'all'}:${String(timeframe || 'default').trim().toLowerCase()}:${String(domain || 'all').trim().toLowerCase()}:${String(region || 'all').trim().toLowerCase()}`;
+
+  // 1. Try reading from Redis cache first
+  try {
+    const cachedData = await redisGet(cacheKey);
+    if (cachedData) {
+      console.log(`[Redis] Development trends cache hit: ${cacheKey}`);
+      return JSON.parse(cachedData);
+    }
+    console.log(`[Redis] Development trends cache miss: ${cacheKey}`);
+  } catch (err) {
+    console.warn('Failed to get development trends from Redis:', err);
+  }
 
   // Map hardcoded frontend domain names to the actual database Subject Areas
   const mapDomainToDb = (dom) => {
@@ -422,11 +437,21 @@ export async function getDevelopmentTrends(query = {}) {
     })()
   ]);
 
-  return {
+  const responseData = {
     publicationTrend,
     citationMirroring,
     topicEvolution,
     frontierDetection,
     forecastInsights
   };
+
+  // Cache the combined response in Redis for 5 minutes (300 seconds)
+  try {
+    await redisSet(cacheKey, JSON.stringify(responseData), 300);
+    console.log(`[Redis] Development trends cached: ${cacheKey}`);
+  } catch (err) {
+    console.warn('Failed to set development trends in Redis:', err);
+  }
+
+  return responseData;
 }
