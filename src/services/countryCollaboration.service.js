@@ -248,9 +248,12 @@ function applyChordLimits(pairs, limitCountries, minValue) {
 export async function getCountryCollaborationChord(filters) {
   const { project_id, subject_area, keywords, from_year, to_year, limit_countries, min_value } = filters;
 
+  const limitCountries = limit_countries !== undefined && limit_countries !== null ? Number(limit_countries) : 10;
+  const minValue = min_value !== undefined && min_value !== null ? Number(min_value) : 1;
+
   const preparedKeywords = prepareKeywords(keywords);
 
-  const cacheKey = `${CACHE_KEY_PREFIX}:${project_id}:${(subject_area || '').toLowerCase()}:${preparedKeywords.normalized}:${from_year || ''}:${to_year || ''}:${limit_countries}:${min_value}`;
+  const cacheKey = `${CACHE_KEY_PREFIX}:${project_id}:${(subject_area || '').toLowerCase()}:${preparedKeywords.normalized}:${from_year || ''}:${to_year || ''}:${limitCountries}:${minValue}`;
   // --- Bắt đầu logic Cache ---
 
   try {
@@ -309,7 +312,7 @@ export async function getCountryCollaborationChord(filters) {
     const allPairs = buildCountryPairs(countriesByArticle);
 
     // B5: Áp dụng các giới hạn (top N quốc gia, giá trị tối thiểu) để làm sạch dữ liệu cho biểu đồ
-    const finalData = applyChordLimits(allPairs, limit_countries, min_value);
+    const finalData = applyChordLimits(allPairs, limitCountries, minValue);
 
     // B5.1: Ánh xạ thêm thông tin growth
     const finalDataWithGrowth = finalData.map(pair => {

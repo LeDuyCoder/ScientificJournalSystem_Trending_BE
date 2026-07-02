@@ -13,8 +13,8 @@ export async function getCollaborationInsights(projectId, filters = {}) {
   // 1. Get Country Collaboration Chord to find highest growth pair
   const chordData = await getCountryCollaborationChord({ ...filters, project_id: projectId });
   
-  let topPairText = 'Japan and the EU';
-  let topGrowthVal = '18% YoY';
+  let topPairText = null;
+  let topGrowthVal = null;
   
   if (Array.isArray(chordData) && chordData.length > 0) {
     // Find the pair with highest growth
@@ -44,24 +44,28 @@ export async function getCollaborationInsights(projectId, filters = {}) {
   }
 
   // 2. Fetch top keywords for Emerging Link and Critical Node
-  let emergingKw = 'Inequality';
-  let criticalKw = 'Random walk';
+  let emergingKw = '';
+  let criticalKw = '';
 
   try {
     const keywordData = await getKeywordVectors(projectId, { ...filters, limit: 3 });
     if (Array.isArray(keywordData) && keywordData.length > 0) {
-      emergingKw = keywordData[0]?.keyword || emergingKw;
+      emergingKw = keywordData[0]?.keyword || '';
       if (keywordData.length > 1) {
-        criticalKw = keywordData[1]?.keyword || criticalKw;
+        criticalKw = keywordData[1]?.keyword || '';
       }
     }
   } catch (err) {
     // Silent fallback
   }
 
+  const description = topPairText && topGrowthVal
+    ? `Global research output has shifted significantly towards multi-national clusters, with ${topPairText} showing the highest reciprocal citation growth of ${topGrowthVal}.`
+    : 'No international collaboration trends detected for this project during the selected timeframe.';
+
   return {
-    description: `Global research output has shifted significantly towards multi-national clusters, with ${topPairText} showing the highest reciprocal citation growth of ${topGrowthVal}.`,
-    emergingLink: `BRICS + ${emergingKw}`,
-    criticalNode: criticalKw
+    description,
+    emergingLink: emergingKw ? `BRICS + ${emergingKw}` : 'No emerging links',
+    criticalNode: criticalKw || 'N/A'
   };
 }
