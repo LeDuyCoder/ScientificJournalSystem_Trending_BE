@@ -16,7 +16,10 @@ import {
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
   getNetworkTopologySchema,
   getDevelopmentTrendsSchema,
-  getSubjectCategoriesSchema
+  getSubjectCategoriesSchema,
+  getCollaborationInsightsSchema,
+  getCrossLinksSchema,
+  getTemporalShiftSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -38,7 +41,11 @@ import {
   fetchKeywordVectors,
   fetchCollaborationNetwork,
   fetchDevelopmentTrends,
-  fetchProjectSubjectCategories
+  fetchProjectSubjectCategories,
+  fetchCollaborationInsights,
+  exportCountryCollaborationMatrix,
+  fetchCrossLinks,
+  fetchTemporalShift
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1443,5 +1450,9 @@ router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fet
  */
 router.get('/subject-categories', validateQuery(getSubjectCategoriesSchema), fetchProjectSubjectCategories);
 
+router.get('/network/collab-insights', validateQuery(getCollaborationInsightsSchema), fetchCollaborationInsights);
+router.get('/network/chord/export', validateQuery(getCountryCollaborationChordSchema), exportCountryCollaborationMatrix);
+router.get('/network/cross-links', validateQuery(getCrossLinksSchema), fetchCrossLinks);
+router.get('/network/temporal-shift', validateQuery(getTemporalShiftSchema), fetchTemporalShift);
 
 export default router;
