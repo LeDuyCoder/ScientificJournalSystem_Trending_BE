@@ -13,10 +13,10 @@ import { errorHandler } from './middlewares/error.middleware.js';
 const app = express();
 
 app.use(cors({
-  origin: '*',
+  origin: [process.env.FRONTEND_URL_TRENDING],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false,
+  credentials: true,
 }));
 
 app.use(express.json());
