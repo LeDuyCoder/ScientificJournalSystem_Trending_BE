@@ -1450,9 +1450,204 @@ router.get('/development-trends', validateQuery(getDevelopmentTrendsSchema), fet
  */
 router.get('/subject-categories', validateQuery(getSubjectCategoriesSchema), fetchProjectSubjectCategories);
 
+/**
+ * @swagger
+ * /analytics/network/collab-insights:
+ *   get:
+ *     summary: Lấy dữ liệu phân tích động về hợp tác khoa học (Collaboration Insights)
+ *     tags: [Analytics]
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của project cần phân tích
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Năm bắt đầu lọc
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Năm kết thúc lọc
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Tên danh mục ngành học để lọc
+ *     responses:
+ *       200:
+ *         description: Thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch collaboration insights successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     description:
+ *                       type: string
+ *                       example: Global research output has shifted significantly towards multi-national clusters, with Japan and the EU showing the highest reciprocal citation growth of 18% YoY.
+ *                     emergingLink:
+ *                       type: string
+ *                       example: BRICS + Inequality
+ *                     criticalNode:
+ *                       type: string
+ *                       example: Random walk
+ */
 router.get('/network/collab-insights', validateQuery(getCollaborationInsightsSchema), fetchCollaborationInsights);
+
+/**
+ * @swagger
+ * /analytics/network/chord/export:
+ *   get:
+ *     summary: Xuất dữ liệu ma trận hợp tác quốc gia dạng file CSV
+ *     tags: [Analytics]
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của project cần xuất dữ liệu
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Năm bắt đầu lọc
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Năm kết thúc lọc
+ *     responses:
+ *       200:
+ *         description: File CSV chứa ma trận hợp tác
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ */
 router.get('/network/chord/export', validateQuery(getCountryCollaborationChordSchema), exportCountryCollaborationMatrix);
+
+/**
+ * @swagger
+ * /analytics/network/cross-links:
+ *   get:
+ *     summary: Lấy dữ liệu liên kết liên ngành (Domain Cross-links)
+ *     tags: [Analytics]
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của project
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Năm bắt đầu lọc
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Năm kết thúc lọc
+ *     responses:
+ *       200:
+ *         description: Thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch cross links successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     interDisciplinaryLinkage:
+ *                       type: integer
+ *                       example: 74
+ *                     transferRate:
+ *                       type: string
+ *                       example: +12%
+ *                     description:
+ *                       type: string
+ *                       example: Physics methodologies rapidly colonizing Financial Engineering domains.
+ */
 router.get('/network/cross-links', validateQuery(getCrossLinksSchema), fetchCrossLinks);
+
+/**
+ * @swagger
+ * /analytics/network/temporal-shift:
+ *   get:
+ *     summary: Lấy phân tích dịch chuyển cụm theo thời gian (Temporal Cluster Shift)
+ *     tags: [Analytics]
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của project
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Năm bắt đầu lọc
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Năm kết thúc lọc
+ *     responses:
+ *       200:
+ *         description: Thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch temporal shift successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     heatmap:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                           intensity:
+ *                             type: number
+ *                     driftEntropy:
+ *                       type: string
+ *                       example: LOW
+ *                     description:
+ *                       type: string
+ *                       example: Clusters are stabilizing around Green Hydrogen and Carbon Capture techs.
+ */
 router.get('/network/temporal-shift', validateQuery(getTemporalShiftSchema), fetchTemporalShift);
 
 export default router;
