@@ -121,7 +121,7 @@ async function getCountriesByArticles(articles, client) {
   const articleIds = articles.map(a => a.article_id);
   const articleYearMap = new Map(articles.map(a => [a.article_id, a.publication_year]));
 
-  // Lưu ý quan trọng: Join `Institution_Author.instritution_id` (có thể là typo trong schema)
+  // Join `Institution_Author.institution_id`
   // và `ia.year = (subquery)` để đảm bảo tính chính xác về thời gian.
   const query = `
     SELECT DISTINCT
@@ -129,7 +129,7 @@ async function getCountriesByArticles(articles, client) {
       UPPER(z.name) AS country_name
     FROM "Author_Article" aa
     JOIN "Institution_Author" ia ON ia.author_id = aa.author_id
-    JOIN "Institution" ins ON ins.institution_id = ia.instritution_id -- Chú ý typo nếu có trong DB
+    JOIN "Institution" ins ON ins.institution_id = ia.institution_id
     JOIN "Zone" z ON z.code = ins.country_code
     WHERE aa.article_id = ANY($1::bigint[])
       AND z.type = 'COUNTRY'
@@ -281,6 +281,24 @@ export async function getCountryCollaborationChord(filters) {
       return [];
     }
 
+    // B2.1: Tính toán growth YoY
+    let prevPairMap = new Map();
+    const fromYearNum = from_year ? Number(from_year) : undefined;
+    const toYearNum = to_year ? Number(to_year) : undefined;
+    if (fromYearNum && toYearNum) {
+      const duration = toYearNum - fromYearNum + 1;
+      const prevFromYear = fromYearNum - duration;
+      const prevToYear = fromYearNum - 1;
+      const prevArticles = await getFilteredArticleIds(scope, { subject_area, keywords: preparedKeywords, from_year: prevFromYear, to_year: prevToYear }, client);
+      if (prevArticles.length > 0) {
+        const prevCountriesByArticle = await getCountriesByArticles(prevArticles, client);
+        const prevPairs = buildCountryPairs(prevCountriesByArticle);
+        prevPairs.forEach(p => {
+          prevPairMap.set(`${p.source}__${p.target}`, p.coAuthorshipValue);
+        });
+      }
+    }
+
     // B3: Từ các bài báo, lấy ra danh sách các quốc gia hợp tác
     const countriesByArticle = await getCountriesByArticles(articles, client);
     if (countriesByArticle.size === 0) {
@@ -293,15 +311,31 @@ export async function getCountryCollaborationChord(filters) {
     // B5: Áp dụng các giới hạn (top N quốc gia, giá trị tối thiểu) để làm sạch dữ liệu cho biểu đồ
     const finalData = applyChordLimits(allPairs, limit_countries, min_value);
 
+    // B5.1: Ánh xạ thêm thông tin growth
+    const finalDataWithGrowth = finalData.map(pair => {
+      const key = `${pair.source}__${pair.target}`;
+      const prevVal = prevPairMap.get(key) || 0;
+      let growthVal = 0;
+      if (prevVal === 0) {
+        growthVal = pair.coAuthorshipValue > 0 ? 100 : 0;
+      } else {
+        growthVal = Math.round(((pair.coAuthorshipValue - prevVal) / prevVal) * 100);
+      }
+      return {
+        ...pair,
+        growth: growthVal >= 0 ? `+${growthVal}%` : `${growthVal}%`
+      };
+    });
+
     // B6: Lưu kết quả vào cache cho các lần gọi sau
     try {
-      await redisSet(cacheKey, JSON.stringify(finalData), CACHE_TTL);
+      await redisSet(cacheKey, JSON.stringify(finalDataWithGrowth), CACHE_TTL);
       logger.info(`[Redis] Country collaboration chord cached: ${cacheKey}`);
     } catch (err) {
       logger.warn('Failed to set country collaboration in Redis cache:', err?.message || err);
     }
 
-    return finalData;
+    return finalDataWithGrowth;
   } finally {
     client.release();
   }

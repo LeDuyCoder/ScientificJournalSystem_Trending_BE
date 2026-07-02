@@ -23,6 +23,11 @@ import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
 import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
 import { getImpactMatrixData } from '../services/impactMatrix.service.js';
+import { getCrossLinks } from '../services/crossLinks.service.js';
+import { getTemporalShift } from '../services/temporalShift.service.js';
+import { getCollaborationInsights } from '../services/collabInsights.service.js';
+
+
 
 
 const getTopEntitiesSchema = z.object({
@@ -816,3 +821,64 @@ export async function fetchProjectSubjectCategories(req, res, next) {
     next(err);
   }
 }
+
+export async function fetchCollaborationInsights(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getCollaborationInsights(project_id, req.validatedQuery);
+    res.json({
+      code: 200,
+      message: 'Fetch collaboration insights successfully',
+      data
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function exportCountryCollaborationMatrix(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getCountryCollaborationChord(req.validatedQuery);
+    
+    let csv = 'Source,Target,CoAuthorshipValue,Growth\n';
+    data.forEach(row => {
+      csv += `"${row.source}","${row.target}",${row.coAuthorshipValue},"${row.growth}"\n`;
+    });
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=collaboration_matrix.csv');
+    return res.status(200).send(csv);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function fetchCrossLinks(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getCrossLinks(project_id, req.validatedQuery);
+    res.json({
+      code: 200,
+      message: 'Fetch cross links successfully',
+      data
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function fetchTemporalShift(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getTemporalShift(project_id, req.validatedQuery);
+    res.json({
+      code: 200,
+      message: 'Fetch temporal shift successfully',
+      data
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+

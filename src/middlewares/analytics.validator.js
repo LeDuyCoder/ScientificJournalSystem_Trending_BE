@@ -196,3 +196,21 @@ export const getSubjectCategoriesSchema = z.object({
   limit: z.coerce.number().int().positive().max(1000).optional().default(1000),
   search: z.string().optional(),
 });
+
+// Schema cho /analytics/network/collab-insights
+export const getCollaborationInsightsSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/network/cross-links
+export const getCrossLinksSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/network/temporal-shift
+export const getTemporalShiftSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
