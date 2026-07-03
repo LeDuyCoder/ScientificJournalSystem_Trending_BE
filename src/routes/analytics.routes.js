@@ -43,6 +43,8 @@ import {
   fetchDevelopmentTrends,
   fetchProjectSubjectCategories,
   fetchCollaborationInsights,
+  fetchCollaborationMetrics,
+  exportCollaborationReport,
   exportCountryCollaborationMatrix,
   fetchCrossLinks,
   fetchTemporalShift
@@ -648,7 +650,9 @@ router.get('/journals/ranking', validateQuery(getJournalRankingSchema), fetchJou
  * /analytics/network/collaboration:
  *   get:
  *     summary: Get global collaboration network
- *     description: Returns a network graph (nodes and edges) of authors and institutions collaborating in the given project scope.
+ *     description: >
+ *       Returns a network graph (nodes and edges) of authors and institutions collaborating in the given project scope. 
+ *       Note: The limit_nodes quota is dynamically split 50-50 between top Authors and top Institutions to ensure balanced representation.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -693,6 +697,33 @@ router.get('/journals/ranking', validateQuery(getJournalRankingSchema), fetchJou
  *     responses:
  *       200:
  *         description: Collaboration network returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     nodes:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                           label:
+ *                             type: string
+ *                           type:
+ *                             type: string
+ *                             enum: [AUTHOR, INSTITUTION]
+ *                           size:
+ *                             type: integer
+ *                           color:
+ *                             type: string
+ *                           metricValue:
+ *                             type: integer
+ *                             description: Article count for authors or affiliated author count for institutions (used for tooltip visualization).
  *       400:
  *         description: Bad Request (missing project_id)
  *       404:
@@ -804,7 +835,13 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  * /analytics/matrix/productivity:
  *   get:
  *     summary: Get author productivity vs impact matrix data
- *     description: Returns data coordinates (yearlyOutput, hIndex) for each author within the project tracking scope and optional client filters.
+ *     description: >
+ *       Returns scatter plot coordinates for each author within the project tracking scope.
+ *       Each point contains the author's display name, yearly article output (X-axis),
+ *       and H-Index (Y-axis). Supports optional filters for subject area, keywords, and publication year range.
+ *       If `from_year` and `to_year` are both provided, `yearlyOutput` is calculated as
+ *       `totalArticles / numberOfYears`. Otherwise, it reflects the article count in the author's
+ *       most recent active publication year.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -818,7 +855,7 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *         name: subject_area
  *         schema:
  *           type: string
- *         description: Optional subject area filter.
+ *         description: Optional subject area filter (display name, case-insensitive).
  *       - in: query
  *         name: keywords
  *         schema:
@@ -839,7 +876,7 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *         schema:
  *           type: integer
  *           default: 50
- *         description: Maximum number of author points to return.
+ *         description: Maximum number of author data points to return (sorted by hIndex desc, then yearlyOutput desc).
  *     responses:
  *       200:
  *         description: Productivity matrix points returned successfully.
@@ -861,12 +898,20 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *                     properties:
  *                       authorId:
  *                         type: string
+ *                         description: Unique identifier of the author.
  *                         example: "12345"
+ *                       authorName:
+ *                         type: string
+ *                         nullable: true
+ *                         description: Display name of the author (from `display_name` column). May be null if not set.
+ *                         example: "Geoffrey E. Hinton"
  *                       yearlyOutput:
  *                         type: number
+ *                         description: Number of articles per year (X-axis). Averaged over year range if filters provided, otherwise taken from most recent active year.
  *                         example: 12
  *                       hIndex:
  *                         type: number
+ *                         description: Author's H-Index (Y-axis).
  *                         example: 35
  *       400:
  *         description: Bad Request (missing project_id, invalid limit or year range)
@@ -1096,7 +1141,9 @@ router.get('/keywords/vectors', fetchKeywordVectors);
  * /analytics/matrix/intensity:
  *   get:
  *     summary: Get Topic Intensity Matrix
- *     description: Returns a heatmap matrix representing the research intensity of authors or institutions across different topics.
+ *     description: >
+ *       Returns a heatmap matrix representing the research intensity of authors or institutions across different topics. 
+ *       Note: The intensity values (0-1) are globally normalized against the maximum count across the entire matrix to provide a vibrant, comparative color gradient.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -1506,6 +1553,77 @@ router.get('/subject-categories', validateQuery(getSubjectCategoriesSchema), fet
  *                       example: Random walk
  */
 router.get('/network/collab-insights', validateQuery(getCollaborationInsightsSchema), fetchCollaborationInsights);
+
+/**
+ * @openapi
+ * /analytics/network/collab-metrics:
+ *   get:
+ *     summary: Fetch collaboration metrics (AVG GROWTH, CROSS-OVER, SUCCESS RATE)
+ *     tags: [Analytics/Network]
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Tên danh mục ngành học để lọc
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Chuỗi danh sách từ khóa, phân cách bằng dấu phẩy
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get('/network/collab-metrics', validateQuery(getCollaborationInsightsSchema), fetchCollaborationMetrics);
+
+/**
+ * @openapi
+ * /analytics/network/collab-report/export:
+ *   get:
+ *     summary: Export full collaboration analytics report as CSV
+ *     tags: [Analytics/Network]
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: CSV Report downloaded successfully
+ */
+router.get('/network/collab-report/export', validateQuery(getCollaborationInsightsSchema), exportCollaborationReport);
+
 
 /**
  * @swagger
