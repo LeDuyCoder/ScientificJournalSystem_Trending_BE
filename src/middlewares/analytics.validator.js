@@ -141,7 +141,7 @@ export const getCollaborationNetworkSchema = z.object({
 // Schema cho /analytics/rankings
 export const getRankingsSchema = z.object({
   project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
-  limit: z.coerce.number().int().positive().default(5),
+  limit: z.coerce.number().int().positive().default(10),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
 
@@ -213,4 +213,4 @@ export const getCrossLinksSchema = z.object({
 export const getTemporalShiftSchema = z.object({
   project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
   ...commonFiltersSchema
-}).refine(yearRangeRefinement, yearRangeMessage);
+}).refine(yearRangeRefinement, yearRangeMessage);

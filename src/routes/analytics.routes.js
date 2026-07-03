@@ -835,7 +835,13 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  * /analytics/matrix/productivity:
  *   get:
  *     summary: Get author productivity vs impact matrix data
- *     description: Returns data coordinates (yearlyOutput, hIndex) for each author within the project tracking scope and optional client filters.
+ *     description: >
+ *       Returns scatter plot coordinates for each author within the project tracking scope.
+ *       Each point contains the author's display name, yearly article output (X-axis),
+ *       and H-Index (Y-axis). Supports optional filters for subject area, keywords, and publication year range.
+ *       If `from_year` and `to_year` are both provided, `yearlyOutput` is calculated as
+ *       `totalArticles / numberOfYears`. Otherwise, it reflects the article count in the author's
+ *       most recent active publication year.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -849,7 +855,7 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *         name: subject_area
  *         schema:
  *           type: string
- *         description: Optional subject area filter.
+ *         description: Optional subject area filter (display name, case-insensitive).
  *       - in: query
  *         name: keywords
  *         schema:
@@ -870,7 +876,7 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *         schema:
  *           type: integer
  *           default: 50
- *         description: Maximum number of author points to return.
+ *         description: Maximum number of author data points to return (sorted by hIndex desc, then yearlyOutput desc).
  *     responses:
  *       200:
  *         description: Productivity matrix points returned successfully.
@@ -892,12 +898,20 @@ router.get('/rankings', validateQuery(getRankingsSchema), fetchRankings);
  *                     properties:
  *                       authorId:
  *                         type: string
+ *                         description: Unique identifier of the author.
  *                         example: "12345"
+ *                       authorName:
+ *                         type: string
+ *                         nullable: true
+ *                         description: Display name of the author (from `display_name` column). May be null if not set.
+ *                         example: "Geoffrey E. Hinton"
  *                       yearlyOutput:
  *                         type: number
+ *                         description: Number of articles per year (X-axis). Averaged over year range if filters provided, otherwise taken from most recent active year.
  *                         example: 12
  *                       hIndex:
  *                         type: number
+ *                         description: Author's H-Index (Y-axis).
  *                         example: 35
  *       400:
  *         description: Bad Request (missing project_id, invalid limit or year range)
