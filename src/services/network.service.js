@@ -25,7 +25,7 @@ export async function getCollaborationNetwork(options = {}) {
   const keywordList = prepareKeywords(keywords);
   const normalizedKeywords = [...keywordList].map(s => s.toLowerCase()).sort().join(',');
 
-  const cacheKey = `analytics:network:collab:v1:${project_id}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}:${limitNodes}:${minWeight}`;
+  const cacheKey = `analytics:network:collab:v3:${project_id}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}:${limitNodes}:${minWeight}`;
 
   try {
     const cachedData = await redisGet(cacheKey);
@@ -184,12 +184,13 @@ export async function getCollaborationNetwork(options = {}) {
     const authEdgesRes = await session.run(authorEdgesQuery, params);
     const instEdgesRes = await session.run(instEdgesQuery, params);
 
-    const nodes = [];
+    const authNodes = [];
+    const instNodes = [];
     const edgesMap = new Map();
 
     authNodesRes.records.forEach(r => {
       const articleCount = r.get('article_count').toNumber();
-      nodes.push({
+      authNodes.push({
         id: `auth_${r.get('id')}`,
         label: r.get('label') || 'Unknown Author',
         type: 'AUTHOR',
@@ -201,7 +202,7 @@ export async function getCollaborationNetwork(options = {}) {
 
     instNodesRes.records.forEach(r => {
       const authorCount = r.get('author_count').toNumber();
-      nodes.push({
+      instNodes.push({
         id: `inst_${r.get('id')}`,
         label: r.get('label') || 'Unknown Institution',
         type: 'INSTITUTION',
@@ -211,12 +212,33 @@ export async function getCollaborationNetwork(options = {}) {
       });
     });
 
-    // Sort nodes and limit
-    nodes.sort((a, b) => b.score - a.score);
-    const finalNodes = nodes.slice(0, limitNodes);
+    // Sort separately
+    authNodes.sort((a, b) => b.score - a.score);
+    instNodes.sort((a, b) => b.score - a.score);
+
+    // Split limit evenly
+    const halfLimit = Math.floor(limitNodes / 2);
     
-    // Cleanup score field for response
-    finalNodes.forEach(n => delete n.score);
+    // Nếu một bên không đủ số lượng halfLimit, nhường quota cho bên kia
+    let finalAuthCount = Math.min(authNodes.length, halfLimit);
+    let finalInstCount = Math.min(instNodes.length, halfLimit);
+    
+    if (finalAuthCount < halfLimit) {
+      finalInstCount = Math.min(instNodes.length, limitNodes - finalAuthCount);
+    } else if (finalInstCount < halfLimit) {
+      finalAuthCount = Math.min(authNodes.length, limitNodes - finalInstCount);
+    }
+
+    const finalNodes = [
+      ...authNodes.slice(0, finalAuthCount),
+      ...instNodes.slice(0, finalInstCount)
+    ];
+    
+    // Lưu lại trường score thay vì xóa, để dùng cho Tooltip
+    finalNodes.forEach(n => {
+      n.metricValue = n.score;
+      delete n.score;
+    });
 
     // Set of valid node ids
     const validNodeIds = new Set(finalNodes.map(n => n.id));
