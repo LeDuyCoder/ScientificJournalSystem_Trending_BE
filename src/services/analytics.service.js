@@ -1,5 +1,5 @@
 import pool from '../config/database.js';
-import logger from '../../utils/logger.js';
+import logger from '../utils/logger.js';
 import { getProjectScope } from './forecast.service.js'; // Tái sử dụng hàm lấy scope
 import { redisGet, redisSet } from './redis.service.js';
 

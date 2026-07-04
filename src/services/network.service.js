@@ -1,7 +1,7 @@
 import pool from '../config/database.js';
 import { neo4jDriver } from '../config/neo4j.js';
 import { redisGet, redisSet } from './redis.service.js';
-import logger from '../../utils/logger.js';
+import logger from '../utils/logger.js';
 
 const CACHE_TTL = 600; // 10 minutes cho Graph Data
 
