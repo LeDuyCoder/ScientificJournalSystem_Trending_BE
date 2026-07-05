@@ -1,3 +1,5 @@
+import { SCHEMA_REGISTRY, BRIDGE_TABLES } from '../services/db_schema_registry.js';
+
 export const cleanGeneratedSql = (rawResponse) => {
     const raw = rawResponse.trim();
     if (raw.toUpperCase().includes("CANNOT_GENERATE_SQL")) {
@@ -42,6 +44,23 @@ export const validateSql = (sql) => {
         const regex = new RegExp(`\\b${keyword}\\b`, 'i');
         if (regex.test(normalized)) {
             throw new Error(`Phát hiện từ khóa nguy hiểm bị cấm thực thi: ${keyword}`);
+        }
+    }
+
+    // Kiểm tra tên các bảng được sử dụng trong câu lệnh SQL
+    const allowedTables = new Set([
+        ...Object.keys(SCHEMA_REGISTRY).map(k => SCHEMA_REGISTRY[k].table),
+        ...Object.keys(BRIDGE_TABLES).map(k => BRIDGE_TABLES[k].table)
+    ]);
+
+    const doubleQuoteRegex = /"([^"]+)"/g;
+    let match;
+    while ((match = doubleQuoteRegex.exec(sql)) !== null) {
+        const name = match[1];
+        // Nếu tên bắt đầu bằng chữ viết hoa (quy chuẩn đặt tên bảng của hệ thống), 
+        // nó bắt buộc phải nằm trong danh sách các bảng hợp lệ của DB.
+        if (name[0] === name[0].toUpperCase() && !allowedTables.has(name)) {
+            throw new Error(`Tên bảng không tồn tại trong cơ sở dữ liệu: "${name}"`);
         }
     }
     

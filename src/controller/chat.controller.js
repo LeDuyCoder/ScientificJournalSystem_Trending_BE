@@ -3,6 +3,7 @@ import logger from '../utils/logger.js';
 
 export const chatRagSystem = async (req, res) => {
     const requestBody = req.body;
+    const projectId = requestBody ? (requestBody.project_id || requestBody.projectId) : null;
     
     if (!requestBody || !requestBody.message) {
         return res.status(400).json({ 
@@ -11,18 +12,23 @@ export const chatRagSystem = async (req, res) => {
         });
     }
     
+    if (!projectId) {
+        return res.status(400).json({
+            success: false,
+            message: 'project_id (or projectId) is required'
+        });
+    }
+    
     try {
         const userQuestion = requestBody.message;
         
-        logger.info(`[CHAT API] Nhận yêu cầu: ${userQuestion}`);
+        logger.info(`[CHAT API] Nhận yêu cầu: ${userQuestion} (Project ID: ${projectId})`);
 
         // Gọi pipeline xử lý Chatbot
-        const result = await chatPipeline(userQuestion);
+        const result = await chatPipeline(userQuestion, projectId);
 
         return res.status(200).json({
             success: true,
-            routeDecision: result.routeDecision,
-            toolResult: result.toolResult,
             answer: result.answer
         });
         

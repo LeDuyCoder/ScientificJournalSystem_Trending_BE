@@ -22,7 +22,12 @@ const router = express.Router();
  *             type: object
  *             required:
  *               - message
+ *               - project_id
  *             properties:
+ *               project_id:
+ *                 type: integer
+ *                 description: ID của project để giới hạn phạm vi tìm kiếm.
+ *                 example: 12
  *               message:
  *                 type: string
  *                 description: Câu hỏi cần giải đáp hoặc tìm kiếm thông tin khoa học.
@@ -38,47 +43,10 @@ const router = express.Router();
  *                 success:
  *                   type: boolean
  *                   example: true
- *                 routeDecision:
- *                   type: object
- *                   properties:
- *                     route:
- *                       type: string
- *                       example: "RANKING_SQL"
- *                     primary_entity:
- *                       type: string
- *                       example: "Journal"
- *                     intent_type:
- *                       type: string
- *                       example: "quartile_lookup"
- *                     required_tables:
- *                       type: array
- *                       items:
- *                         type: string
- *                       example: ["Journal", "Journal_Ranking"]
- *                     reason:
- *                       type: string
- *                       example: "User is asking about Q1 journals in 2024"
- *                 toolResult:
- *                   type: object
- *                   properties:
- *                     type:
- *                       type: string
- *                       example: "RANKING_SQL"
- *                     sql:
- *                       type: string
- *                       example: "SELECT j.journal_id, j.display_name AS journal_name, jr.year, jr.value_txt FROM \"Journal\" AS j JOIN \"Journal_Ranking\" AS jr ON jr.journal_id = j.journal_id WHERE jr.year = 2024 AND jr.value_txt ILIKE '%Q1%' AND j.is_deleted = false LIMIT 20"
- *                     rows:
- *                       type: array
- *                       items:
- *                         type: object
- *                     error:
- *                       type: string
- *                       nullable: true
- *                       example: null
  *                 answer:
  *                   type: string
- *                   description: Câu trả lời cuối cùng bằng tiếng Việt đã được tổng hợp từ ngữ cảnh dữ liệu.
- *                   example: "Dưới đây là danh sách các tạp chí Q1 năm 2024 nhận được từ cơ sở dữ liệu..."
+ *                   description: Câu trả lời dạng text Markdown sạch, phù hợp để hiển thị trực tiếp trên giao diện chat.
+ *                   example: "1. **Nature Medicine** - Năm: 2024 - Phân nhóm: Q1 - Chỉ số: SJR"
  *       400:
  *         description: Yêu cầu không hợp lệ do thiếu tham số 'message' trong body.
  *         content:
