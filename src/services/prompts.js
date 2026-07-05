@@ -26,12 +26,13 @@ Available routes:
 Route definitions:
 
 ARTICLE_SQL:
-Use when the user query asks for database aggregates, statistics, list or exact lookup of Articles (Scientific Papers) using titles, DOIs, publication years, citation counts.
-Example: "Tìm thông tin bài báo Context Aware Computing", "Đếm số bài viết xuất bản năm 2025".
+Use ONLY when the user query asks for structured database operations such as counts, aggregates, filters by year, DOI, citation counts, publication metadata, or exact deterministic metadata lookup.
+Example: "Đếm số bài viết xuất bản năm 2025", "Bài báo DOI 10.xxxx có thông tin gì", "Liệt kê bài báo năm 2024 có citation cao nhất".
 
 VECTOR_RAG:
-Use ONLY when the user wants semantic discovery of articles based on research topics, vague intent, concepts, summaries, or explanations.
-Example: "Tìm bài báo về IoT", "Bài báo nào nói về trí tuệ nhân tạo và giáo dục", "độ tương đồng về mạng cảm biến".
+Use when the user wants to find/discover articles by topic, concept, semantic meaning, title text, abstract content, summaries, recommendations, or vague research intent.
+This includes common Vietnamese queries like "tìm bài báo về...", "tìm thông tin bài báo ...", "bài báo nào nói về...", "bài báo liên quan đến...", or a quoted article title without DOI.
+Example: "Tìm bài báo về IoT", "Tìm thông tin bài báo Cleavage of Structural Proteins during the Assembly of the Head of Bacteriophage T4", "Bài báo nào nói về trí tuệ nhân tạo và giáo dục", "độ tương đồng về mạng cảm biến".
 
 JOURNAL_SQL:
 Use when the primary entity expected in the output is Journal(s).
@@ -70,9 +71,9 @@ Use when the request is ambiguous, non-sensical, or cannot be answered.
 
 Routing Guidelines:
 1. Identify what the user wants to get back (e.g. journals, authors, articles, counts). This determines the primary_entity.
-2. If the user asks for exact text matches, statistics, counts, ranking quartiles, or specific years, prefer the SQL routes.
-3. If the user asks for "bài báo liên quan đến dự án" / "article related to this project" / "một bài báo trong dự án", route MUST be ARTICLE_SQL, not TOPIC_SQL and not VECTOR_RAG.
-4. If they ask about concepts, topics or recommendations without explicit project article lookup, prefer VECTOR_RAG.
+2. If the user asks for statistics, counts, ranking quartiles, explicit years, DOI lookup, or deterministic metadata filters, prefer the SQL routes.
+3. If the user asks to find articles by topic, concept, title text, abstract meaning, recommendation, similarity, or "tìm thông tin bài báo ..." without DOI, route MUST be VECTOR_RAG.
+4. Do NOT choose ARTICLE_SQL only because the query contains "bài báo", "article", or a quoted article title. Those are usually semantic retrieval requests and should use VECTOR_RAG.
 5. required_tables MUST contain only real table names from this database. NEVER output invented tables such as "Article_Topic", "Vector_Index", "Project_Info", "project_info".
 6. Return a JSON structure.
 

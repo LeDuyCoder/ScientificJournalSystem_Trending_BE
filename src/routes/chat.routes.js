@@ -1,5 +1,6 @@
 import express from 'express';
 import { chatRagSystem } from '../controller/chat.controller.js';
+import { chatRateLimiter } from '../middlewares/rateLimiter.middleware.js';
 
 const router = express.Router();
 
@@ -74,6 +75,6 @@ const router = express.Router();
  *                   type: string
  *                   example: "Đã xảy ra lỗi hệ thống, vui lòng thử lại sau."
  */
-router.post('/chat', chatRagSystem);
+router.post('/chat', chatRateLimiter, chatRagSystem);
 
 export default router;
