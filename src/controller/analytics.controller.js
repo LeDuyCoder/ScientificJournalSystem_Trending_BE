@@ -26,6 +26,8 @@ import { getImpactMatrixData } from '../services/impactMatrix.service.js';
 import { getCrossLinks } from '../services/crossLinks.service.js';
 import { getTemporalShift } from '../services/temporalShift.service.js';
 import { getCollaborationInsights, getCollaborationMetrics } from '../services/collabInsights.service.js';
+import { getCuratedArticles, getProjectKeywords, getTrackedJournals, addProjectKeyword, removeProjectKeyword } from '../services/curatedArticles.service.js';
+
 
 
 
@@ -969,3 +971,106 @@ export async function fetchTemporalShift(req, res, next) {
   }
 }
 
+/**
+ * Fetch Curated Articles for a project.
+ */
+export async function fetchCuratedArticles(req, res, next) {
+  try {
+    const { project_id, subject_area, keywords, from_year, to_year, page, limit, is_open_access } = req.validatedQuery;
+
+    const data = await getCuratedArticles(project_id, {
+      subject_area,
+      keywords,
+      from_year,
+      to_year,
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 10,
+      is_open_access
+    });
+
+    res.status(200).json({
+      code: 200,
+      message: 'Fetch curated articles successfully',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Fetch Project Keywords.
+ */
+export async function fetchProjectKeywords(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getProjectKeywords(project_id);
+
+    res.status(200).json({
+      code: 200,
+      message: 'Fetch project keywords successfully',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Add a Keyword to a Project.
+ */
+export async function addProjectKeywordHandler(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const { keyword } = req.body;
+    if (!keyword) {
+      return res.status(400).json({ code: 400, message: 'keyword is required' });
+    }
+    const data = await addProjectKeyword(project_id, keyword);
+    res.status(200).json({
+      code: 200,
+      message: 'Add project keyword successfully',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Remove a Keyword from a Project.
+ */
+export async function removeProjectKeywordHandler(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const { keyword_id } = req.params;
+    if (!keyword_id) {
+      return res.status(400).json({ code: 400, message: 'keyword_id is required' });
+    }
+    await removeProjectKeyword(project_id, keyword_id);
+    res.status(200).json({
+      code: 200,
+      message: 'Remove project keyword successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Fetch Tracked Journals.
+ */
+export async function fetchTrackedJournals(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getTrackedJournals(project_id);
+
+    res.status(200).json({
+      code: 200,
+      message: 'Fetch tracked journals successfully',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
