@@ -2,7 +2,7 @@ import pool from '../config/database.js';
 import { getProjectScope } from './forecast.service.js'; // Tái sử dụng hàm lấy scope có sẵn
 import { findJournalMigrationSnapshots } from '../repositories/migration.repository.js';
 import { normalizeSourceModel, normalizeTargetModel, buildInitialMigrationFlow, calculateTransitionRate } from '../utils/accessModel.js';
-import logger from '../../utils/logger.js';
+import logger from '../utils/logger.js';
 
 /**
  * Service to analyze journal migration flows from a start year to an end year.

@@ -60,7 +60,8 @@ const router = express.Router();
  *                 message:
  *                   type: string
  *                   example: Internal Server Error
- */router.get('/stats', validateGetDashboardStats, getDashboardStatsHandler);
+ */
+router.get('/stats', validateGetDashboardStats, getDashboardStatsHandler);
 
 /**
  * @openapi
