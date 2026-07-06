@@ -310,7 +310,7 @@ export async function getJournalRanking(filters) {
         averageImpactFactor: Math.round(avgCurrent * 100) / 100,
         percentageChange,
         trackedCount: totalJournals,
-        limit: 100
+        limit: 150
       }
     };
 
