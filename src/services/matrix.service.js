@@ -2,7 +2,7 @@ import pool from '../config/database.js';
 import logger from '../utils/logger.js';
 import { redisGet, redisSet } from './redis.service.js';
 
-const CACHE_KEY_PREFIX = 'analytics:matrix:intensity:v1';
+const CACHE_KEY_PREFIX = 'matrix:intensity:v2';
 const CACHE_TTL = 600; // 10 minutes
 
 /**
@@ -341,22 +341,15 @@ export async function getTopicIntensityMatrix(options = {}) {
     const matrixRes = await client.query(matrixSql, matrixParams);
 
     // ════════════════════════════════════════════════════════════
-    // STEP 6: Build full Cartesian product + Row-based normalization
+    // STEP 6: Build full Cartesian product + Global normalization
     // ════════════════════════════════════════════════════════════
     const countsMap = new Map();
+    let globalMaxCount = 0;
+    
     matrixRes.rows.forEach(r => {
-      countsMap.set(`${r.row_id}-${r.topic_id}`, Number(r.cnt));
-    });
-
-    // Compute max count per row (for row-based normalization)
-    const maxCountPerRow = {};
-    rows.forEach(r => {
-      let max = 0;
-      topics.forEach(t => {
-        const count = countsMap.get(`${r.row_id}-${t.topic_id}`) || 0;
-        if (count > max) max = count;
-      });
-      maxCountPerRow[r.row_id] = max;
+      const cnt = Number(r.cnt);
+      countsMap.set(`${r.row_id}-${r.topic_id}`, cnt);
+      if (cnt > globalMaxCount) globalMaxCount = cnt;
     });
 
     // Build full matrix: every row x every topic
@@ -364,10 +357,9 @@ export async function getTopicIntensityMatrix(options = {}) {
     rows.forEach(r => {
       topics.forEach(t => {
         const count = countsMap.get(`${r.row_id}-${t.topic_id}`) || 0;
-        const maxCount = maxCountPerRow[r.row_id];
         let intensity = 0;
-        if (maxCount > 0) {
-          intensity = Number((count / maxCount).toFixed(2));
+        if (globalMaxCount > 0) {
+          intensity = Number((count / globalMaxCount).toFixed(3));
         }
         data.push({
           rowName: r.row_name,

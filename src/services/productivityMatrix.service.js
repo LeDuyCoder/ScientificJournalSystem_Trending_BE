@@ -187,6 +187,7 @@ export async function getProductivityMatrix(projectId, filters = {}) {
       const query = `
         SELECT
           au.author_id AS "authorId",
+          au.display_name AS "authorName",
           COUNT(DISTINCT a.article_id)::integer AS total_articles,
           COALESCE(au.h_index, 0)::integer AS "hIndex"
         FROM "Author" au
@@ -196,7 +197,7 @@ export async function getProductivityMatrix(projectId, filters = {}) {
           AND COALESCE(au.is_deleted, false) = false
           AND au.author_id IS NOT NULL
           ${whereClause}
-        GROUP BY au.author_id, au.h_index
+        GROUP BY au.author_id, au.display_name, au.h_index
       `;
 
       const result = await client.query(query, params);
@@ -208,6 +209,7 @@ export async function getProductivityMatrix(projectId, filters = {}) {
         const yearlyOutput = Math.round(totalArticles / numberOfYears);
         return {
           authorId: String(row.authorId),
+          authorName: row.authorName || null,
           yearlyOutput,
           hIndex: Number(row.hIndex)
         };
@@ -233,6 +235,7 @@ export async function getProductivityMatrix(projectId, filters = {}) {
         )
         SELECT
           ay.author_id AS "authorId",
+          au.display_name AS "authorName",
           ay.article_count AS "yearlyOutput",
           COALESCE(au.h_index, 0)::integer AS "hIndex"
         FROM AuthorYearlyCount ay
@@ -244,6 +247,7 @@ export async function getProductivityMatrix(projectId, filters = {}) {
 
       matrixPoints = result.rows.map(row => ({
         authorId: String(row.authorId),
+        authorName: row.authorName || null,
         yearlyOutput: Number(row.yearlyOutput || 0),
         hIndex: Number(row.hIndex || 0)
       }));

@@ -25,7 +25,7 @@ import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
 import { getImpactMatrixData } from '../services/impactMatrix.service.js';
 import { getCrossLinks } from '../services/crossLinks.service.js';
 import { getTemporalShift } from '../services/temporalShift.service.js';
-import { getCollaborationInsights } from '../services/collabInsights.service.js';
+import { getCollaborationInsights, getCollaborationMetrics } from '../services/collabInsights.service.js';
 
 
 
@@ -832,6 +832,93 @@ export async function fetchCollaborationInsights(req, res, next) {
       data
     });
   } catch (err) {
+    next(err);
+  }
+}
+
+export async function fetchCollaborationMetrics(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const data = await getCollaborationMetrics(project_id, req.validatedQuery);
+    res.json({
+      code: 200,
+      message: 'Fetch collaboration metrics successfully',
+      data
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function exportCollaborationReport(req, res, next) {
+  try {
+    const { project_id } = req.validatedQuery;
+    const filters = req.validatedQuery;
+    
+    // Fetch all necessary data concurrently
+    const [rankings, metrics, network] = await Promise.all([
+      getInfluentialRankings(project_id, filters),
+      getCollaborationMetrics(project_id, filters),
+      getCollaborationNetwork(filters)
+    ]);
+
+    let csv = '';
+    const projectId = project_id || 'all';
+
+    // 1. KEY INSIGHTS
+    csv += '--- KEY INSIGHTS ---\n';
+    csv += 'Metric,Value\n';
+    if (metrics && metrics.metrics) {
+      metrics.metrics.forEach(m => {
+        csv += `"${m.label}","${m.value}"\n`;
+      });
+    } else {
+      csv += 'No insights data available,\n';
+    }
+    csv += '\n';
+
+    // 2. TOP INFLUENTIAL AUTHORS
+    csv += '--- TOP INFLUENTIAL AUTHORS ---\n';
+    csv += 'Rank,Name,Impact Score\n';
+    if (rankings && rankings.authors && rankings.authors.length > 0) {
+      rankings.authors.forEach(a => {
+        csv += `${a.rank},"${a.name}",${a.score}\n`;
+      });
+    } else {
+      csv += 'No top authors available,,\n';
+    }
+    csv += '\n';
+
+    // 3. LEADING INSTITUTIONS
+    csv += '--- LEADING INSTITUTIONS ---\n';
+    csv += 'Rank,Name,Citations\n';
+    if (rankings && rankings.institutions && rankings.institutions.length > 0) {
+      rankings.institutions.forEach(i => {
+        csv += `${i.rank},"${i.name}",${i.score}\n`;
+      });
+    } else {
+      csv += 'No leading institutions available,,\n';
+    }
+    csv += '\n';
+
+    // 4. GLOBAL COLLABORATION NETWORK
+    csv += '--- GLOBAL COLLABORATION NETWORK ---\n';
+    csv += 'Name,Type,Articles/Affiliations,Label\n';
+    if (network && network.nodes && network.nodes.length > 0) {
+      network.nodes.forEach(node => {
+        const type = node.type === 'AUTHOR' ? 'Author' : 'Institution';
+        const metric = node.size || node.val || 0;
+        csv += `"${node.id}","${type}",${metric},"${node.label || node.id}"\n`;
+      });
+    } else {
+      csv += 'No network nodes available,,,\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="collaboration_analytics_report_${projectId}.csv"`);
+    return res.status(200).send(Buffer.from('\uFEFF' + csv, 'utf-8')); // Add BOM for Excel UTF-8 compatibility
+  } catch (err) {
+    logger.error(`Error exporting collaboration report: ${err.message}`, err);
     next(err);
   }
 }
