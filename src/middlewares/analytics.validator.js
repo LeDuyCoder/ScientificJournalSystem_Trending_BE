@@ -126,7 +126,8 @@ export const getTrendsSchema = z.object({
 // Schema cho /analytics/journals/ranking
 export const getJournalRankingSchema = z.object({
   project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
-  limit: z.coerce.number().int().positive().min(1).max(50).default(5),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().min(1).max(100).optional().default(10),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
 

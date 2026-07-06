@@ -111,7 +111,7 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
  */
 export async function fetchJournalRanking(req, res, next) {
   try {
-    const { project_id, subject_area, keywords, from_year, to_year, limit } = req.validatedQuery;
+    const { project_id, subject_area, keywords, from_year, to_year, page, limit } = req.validatedQuery;
 
     const data = await getJournalRanking({
       projectId: String(project_id),
@@ -119,6 +119,7 @@ export async function fetchJournalRanking(req, res, next) {
       keywords: keywords ? String(keywords) : undefined,
       fromYear: from_year,
       toYear: to_year,
+      page: page,
       limit: limit,
     });
 
