@@ -615,10 +615,15 @@ router.get('/geo-distribution', validateQuery(getGeoDistributionSchema), fetchGe
  *           type: integer
  *         description: The ending publication year for filtering articles.
  *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number for pagination.
+ *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
- *         description: Maximum number of journals to return.
+ *         description: Maximum number of journals to return per page.
  *     responses:
  *       200:
  *         description: Fetch journal rankings successfully.
@@ -634,14 +639,66 @@ router.get('/geo-distribution', validateQuery(getGeoDistributionSchema), fetchGe
  *                   type: string
  *                   example: Fetch journal rankings successfully
  *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       name:
- *                         type: string
- *                       impactFactor:
- *                         type: number
+ *                   type: object
+ *                   properties:
+ *                     journals:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: "4"
+ *                           name:
+ *                             type: string
+ *                             example: "Nature Reviews Drug Discovery"
+ *                           publisher:
+ *                             type: string
+ *                             example: "Nature Research"
+ *                           issn:
+ *                             type: string
+ *                             example: "14741784"
+ *                           impactFactor:
+ *                             type: number
+ *                             example: 32.577
+ *                           sjrRank:
+ *                             type: string
+ *                             example: "Q1"
+ *                           trend:
+ *                             type: array
+ *                             items:
+ *                               type: number
+ *                             example: [11.2, 19.4, 22.3, 30.5, 32.5]
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         totalCount:
+ *                           type: integer
+ *                           example: 64
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 4
+ *                         totalPages:
+ *                           type: integer
+ *                           example: 16
+ *                     summary:
+ *                       type: object
+ *                       properties:
+ *                         averageImpactFactor:
+ *                           type: number
+ *                           example: 11.91
+ *                         percentageChange:
+ *                           type: string
+ *                           example: "+1.2%"
+ *                         trackedCount:
+ *                           type: integer
+ *                           example: 64
+ *                         limit:
+ *                           type: integer
+ *                           example: 100
  */
 router.get('/journals/ranking', validateQuery(getJournalRankingSchema), fetchJournalRanking);
 
