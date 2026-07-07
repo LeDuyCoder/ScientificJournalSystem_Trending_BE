@@ -53,6 +53,10 @@ const commonFiltersSchema = {
   keywords: z.string().optional(), // Sẽ được service xử lý split(',')
   from_year: z.coerce.number().int().optional(),
   to_year: z.coerce.number().int().optional(),
+  is_open_access: z.preprocess((val) => {
+    if (typeof val === 'string') return val === 'true';
+    return Boolean(val);
+  }, z.boolean().optional()),
 };
 
 const yearRangeRefinement = (data) => !data.from_year || !data.to_year || data.from_year <= data.to_year;
@@ -215,3 +219,16 @@ export const getTemporalShiftSchema = z.object({
   project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/curated-articles
+export const getCuratedArticlesSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(10),
+  ...commonFiltersSchema
+}).refine(yearRangeRefinement, yearRangeMessage);
+
+// Schema cho /analytics/project-keywords
+export const getProjectKeywordsSchema = z.object({
+  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+});

@@ -19,7 +19,9 @@ import {
   getSubjectCategoriesSchema,
   getCollaborationInsightsSchema,
   getCrossLinksSchema,
-  getTemporalShiftSchema
+  getTemporalShiftSchema,
+  getCuratedArticlesSchema,
+  getProjectKeywordsSchema
 } from '../middlewares/analytics.validator.js';
 import {
   fetchTrends,
@@ -47,7 +49,12 @@ import {
   exportCollaborationReport,
   exportCountryCollaborationMatrix,
   fetchCrossLinks,
-  fetchTemporalShift
+  fetchTemporalShift,
+  fetchCuratedArticles,
+  fetchProjectKeywords,
+  addProjectKeywordHandler,
+  removeProjectKeywordHandler,
+  fetchTrackedJournals
 } from '../controller/analytics.controller.js';
 
 const router = express.Router();
@@ -1824,5 +1831,193 @@ router.get('/network/cross-links', validateQuery(getCrossLinksSchema), fetchCros
  *                       example: Clusters are stabilizing around Green Hydrogen and Carbon Capture techs.
  */
 router.get('/network/temporal-shift', validateQuery(getTemporalShiftSchema), fetchTemporalShift);
+
+/**
+ * @openapi
+ * /analytics/curated-articles:
+ *   get:
+ *     summary: Get curated articles for a project
+ *     description: Returns a paginated list of articles curated for a specific project based on tracked keywords and subject areas.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *       - in: query
+ *         name: subject_area
+ *         schema:
+ *           type: string
+ *         description: Narrow down research output to a specific subject area.
+ *       - in: query
+ *         name: keywords
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of keywords to filter by.
+ *       - in: query
+ *         name: from_year
+ *         schema:
+ *           type: integer
+ *         description: Filter starting from this publication year.
+ *       - in: query
+ *         name: to_year
+ *         schema:
+ *           type: integer
+ *         description: Filter up to this publication year.
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Items per page.
+ *     responses:
+ *       200:
+ *         description: Curated articles returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch curated articles successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                     currentPage:
+ *                       type: integer
+ *                     items:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                           title:
+ *                             type: string
+ *                           description:
+ *                             type: string
+ *                           publishedYear:
+ *                             type: integer
+ *                           isOpenAccess:
+ *                             type: boolean
+ *                           authors:
+ *                             type: string
+ *                           isBookmarked:
+ *                             type: boolean
+ *       400:
+ *         description: Bad Request (missing project_id)
+ *       404:
+ *         description: Project not found
+ */
+router.get('/curated-articles', validateQuery(getCuratedArticlesSchema), fetchCuratedArticles);
+
+/**
+ * @openapi
+ * /analytics/project-keywords:
+ *   get:
+ *     summary: Get tracked keywords for a project
+ *     description: Returns the keywords currently tracked by a specific project.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *     responses:
+ *       200:
+ *         description: Keywords returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch project keywords successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       label:
+ *                         type: string
+ */
+router.get('/project-keywords', validateQuery(getProjectKeywordsSchema), fetchProjectKeywords);
+router.post('/project-keywords', validateQuery(getProjectKeywordsSchema), addProjectKeywordHandler);
+router.delete('/project-keywords/:keyword_id', validateQuery(getProjectKeywordsSchema), removeProjectKeywordHandler);
+
+/**
+ * @openapi
+ * /analytics/tracked-journals:
+ *   get:
+ *     summary: Get tracked journals for a project
+ *     description: Returns the distinct journals that the curated articles belong to.
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The ID of the project.
+ *     responses:
+ *       200:
+ *         description: Journals returned successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: string
+ *                   example: Fetch tracked journals successfully
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       publisher:
+ *                         type: string
+ *                       issn:
+ *                         type: string
+ *                       impactFactor:
+ *                         type: number
+ *                       sjrRank:
+ *                         type: string
+ */
+router.get('/tracked-journals', validateQuery(getProjectKeywordsSchema), fetchTrackedJournals);
 
 export default router;
