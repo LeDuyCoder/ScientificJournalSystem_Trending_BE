@@ -452,7 +452,7 @@ router.get('/forecast', validateQuery(getForecastSchema), fetchForecast);
  * /analytics/geo-distribution:
  *   get:
  *     summary: Get geographical research distribution by project
- *     description: Returns research output density by country matching the project tracking scope and optional filters.
+ *     description: Returns research output density by country matching the project tracking scope and optional filters. If `country` is provided, returns density by REGION zones within that country.
  *     tags:
  *       - Analytics
  *     parameters:
@@ -462,6 +462,11 @@ router.get('/forecast', validateQuery(getForecastSchema), fetchForecast);
  *           type: string
  *         required: true
  *         description: The ID of the project.
+ *       - in: query
+ *         name: country
+ *         schema:
+ *           type: string
+ *         description: Optional country filter by country name, Alpha-2 code, Alpha-3 ISO code, or Zone ID. When provided, response is grouped by REGION.
  *       - in: query
  *         name: subject_area
  *         schema:
@@ -504,6 +509,18 @@ router.get('/forecast', validateQuery(getForecastSchema), fetchForecast);
  *                       countryCode:
  *                         type: string
  *                         example: US
+ *                       countryName:
+ *                         type: string
+ *                         nullable: true
+ *                         example: United States
+ *                       regionCode:
+ *                         type: string
+ *                         nullable: true
+ *                         example: NA
+ *                       regionName:
+ *                         type: string
+ *                         nullable: true
+ *                         example: Northern America
  *                       intensity:
  *                         type: string
  *                         enum: [PEAK, HIGH, MEDIUM, LOW]

@@ -307,9 +307,10 @@ export async function fetchForecast(req, res, next) {
  */
 export async function fetchGeoDistribution(req, res, next) {
   try {
-    const { project_id: projectId, subject_area, keywords, from_year, to_year } = req.validatedQuery;
+    const { project_id: projectId, country, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const filters = {
+      country,
       subjectArea: subject_area,
       keywords: keywords,
       fromYear: from_year,

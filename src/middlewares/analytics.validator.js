@@ -112,6 +112,7 @@ export const getForecastSchema = z.object({
 // Schema cho /analytics/geo-distribution
 export const getGeoDistributionSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
+  country: z.string().trim().optional(),
   ...commonFiltersSchema
 }).refine(yearRangeRefinement, yearRangeMessage);
 
