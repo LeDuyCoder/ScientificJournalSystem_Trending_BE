@@ -47,9 +47,9 @@ function calculateGeoIntensity(countryMetrics) {
     }
 
     return {
-      countryCode: item.countryCode,
+      ...item,
       intensity,
-      count: item.count
+      count: Number(item.count || 0)
     };
   });
 }
@@ -59,6 +59,7 @@ function calculateGeoIntensity(countryMetrics) {
  * 
  * @param {string|number} projectId - ID of the project.
  * @param {object} filters - Additional query filters.
+ * @param {string} [filters.country] - Optional country filter. If provided, returns distribution by region within that country.
  * @param {string} [filters.subjectArea] - Optional subject area filter.
  * @param {string|string[]} [filters.keywords] - Optional keywords list.
  * @param {number} [filters.fromYear] - Optional start year.
@@ -66,7 +67,8 @@ function calculateGeoIntensity(countryMetrics) {
  * @returns {Promise<Array<object>>}
  */
 export async function getGeoDistribution(projectId, filters = {}) {
-  const { subjectArea, keywords, fromYear, toYear } = filters;
+  const { country, subjectArea, keywords, fromYear, toYear } = filters;
+  const normalizedCountry = country ? String(country).trim() : '';
 
   // Process keywords into a clean sorted string to form a stable cache key
   let normalizedKeywords = '';
@@ -78,8 +80,10 @@ export async function getGeoDistribution(projectId, filters = {}) {
     normalizedKeywords = [...keywordList].map(s => s.toLowerCase()).sort().join(',');
   }
 
-  // Build stable cache key
-  const cacheKey = `${CACHE_KEY_PREFIX}:${projectId}:${(subjectArea || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`;
+  // Build stable cache key. Keep the old key shape when country is not provided.
+  const cacheKey = normalizedCountry
+    ? `${CACHE_KEY_PREFIX}:${projectId}:country:${normalizedCountry.toLowerCase()}:${(subjectArea || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`
+    : `${CACHE_KEY_PREFIX}:${projectId}:${(subjectArea || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`;
 
   try {
     const cachedData = await redisGet(cacheKey);
@@ -251,35 +255,85 @@ export async function getGeoDistribution(projectId, filters = {}) {
 
     const whereClause = sqlFilters.length > 0 ? `AND ${sqlFilters.join(' AND ')}` : '';
 
-    const querySql = `
-      SELECT 
-        z.code AS "countryCode",
-        COUNT(DISTINCT a.article_id)::integer AS count
-      FROM "Article" a
-      JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
-      JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
-      JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
-      JOIN "Zone" z ON j.country = z.zone_id AND z.type = 'COUNTRY'
-      WHERE COALESCE(a.is_deleted, false) = false
-        ${whereClause}
-      GROUP BY z.code
-      ORDER BY count DESC
-    `;
+    let querySql;
+
+    if (normalizedCountry) {
+      params.push(normalizedCountry);
+      const countryIndex = params.length;
+
+      querySql = `
+        SELECT 
+          country_zone.code AS "countryCode",
+          country_zone.name AS "countryName",
+          region_zone.code AS "regionCode",
+          region_zone.name AS "regionName",
+          COUNT(DISTINCT a.article_id)::integer AS count
+        FROM "Article" a
+        JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
+        JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
+        JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
+        JOIN "Zone" country_zone ON j.country = country_zone.zone_id AND country_zone.type = 'COUNTRY'
+        JOIN "Zone" region_zone ON j.region = region_zone.zone_id AND region_zone.type = 'REGION'
+        WHERE COALESCE(a.is_deleted, false) = false
+          AND (
+            country_zone.zone_id::text = $${countryIndex}
+            OR LOWER(country_zone.name) = LOWER($${countryIndex})
+            OR UPPER(country_zone.code) = UPPER($${countryIndex})
+            OR UPPER(country_zone.iso_code) = UPPER($${countryIndex})
+          )
+          ${whereClause}
+        GROUP BY country_zone.code, country_zone.name, region_zone.code, region_zone.name
+        ORDER BY count DESC
+      `;
+    } else {
+      querySql = `
+        SELECT 
+          z.code AS "countryCode",
+          COUNT(DISTINCT a.article_id)::integer AS count
+        FROM "Article" a
+        JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
+        JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
+        JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
+        JOIN "Zone" z ON j.country = z.zone_id AND z.type = 'COUNTRY'
+        WHERE COALESCE(a.is_deleted, false) = false
+          ${whereClause}
+        GROUP BY z.code
+        ORDER BY count DESC
+      `;
+    }
 
     const result = await client.query(querySql, params);
 
-    // Filter and clean country records
+    // Filter and clean location records
     const validRecords = [];
     for (const row of result.rows) {
-      const code = row.countryCode ? String(row.countryCode).toUpperCase().trim() : null;
-      if (!code || !isValidCountryCode(code)) {
-        logger.warn(`Skipping invalid countryCode: '${row.countryCode}'`);
-        continue;
+      if (normalizedCountry) {
+        const regionCode = row.regionCode ? String(row.regionCode).toUpperCase().trim() : null;
+        const regionName = row.regionName ? String(row.regionName).trim() : null;
+
+        if (!regionCode && !regionName) {
+          logger.warn(`Skipping invalid region for country filter '${normalizedCountry}'`);
+          continue;
+        }
+
+        validRecords.push({
+          countryCode: row.countryCode ? String(row.countryCode).toUpperCase().trim() : null,
+          countryName: row.countryName ? String(row.countryName).trim() : null,
+          regionCode,
+          regionName,
+          count: Number(row.count || 0)
+        });
+      } else {
+        const code = row.countryCode ? String(row.countryCode).toUpperCase().trim() : null;
+        if (!code || !isValidCountryCode(code)) {
+          logger.warn(`Skipping invalid countryCode: '${row.countryCode}'`);
+          continue;
+        }
+        validRecords.push({
+          countryCode: code,
+          count: Number(row.count || 0)
+        });
       }
-      validRecords.push({
-        countryCode: code,
-        count: Number(row.count || 0)
-      });
     }
 
     // Calculate dynamic intensity
