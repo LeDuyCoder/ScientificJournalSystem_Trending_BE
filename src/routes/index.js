@@ -13,7 +13,7 @@ const router = Router();
 /**
  * Mount all feature routes.
  */
-router.use('/articles', requireAuth, requireProjectAccess, articlesRoutes);
+router.use('/articles', articlesRoutes);
 router.use('/analytics', requireAuth, requireProjectAccess, analyticsRoutes);
 router.use('/dashboard', requireAuth, requireProjectAccess, dashboardRoutes);
 router.use('/search', requireAuth, searchRoutes);
