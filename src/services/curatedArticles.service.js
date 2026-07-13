@@ -110,13 +110,23 @@ export async function getCuratedArticles(projectId, options = {}) {
     }
 
     // 4. Fetch paginated data
-    params.push(limit, offset);
+    const pIdIndex = params.length + 1;
+    params.push(projectId);
+    const uIdIndex = params.length + 1;
+    params.push(options.userId || '00000000-0000-0000-0000-000000000000');
+    
+    const limitIndex = params.length + 1;
+    params.push(limit);
+    const offsetIndex = params.length + 1;
+    params.push(offset);
+    
     const dataQuery = `
       SELECT 
         a.article_id AS id,
         a.title,
         a.abstract AS description,
         a.publication_year AS "publishedYear",
+        a.doi,
         COALESCE(j.is_open_access, false) AS "isOpenAccess",
         (
           SELECT string_agg(au.display_name, ', ')
@@ -129,14 +139,20 @@ export async function getCuratedArticles(projectId, options = {}) {
           FROM "Keyword_Article" ka
           JOIN "Keyword" k ON ka.keyword_id = k.keyword_id
           WHERE ka.article_id = a.article_id
-        ) AS keywords
+        ) AS keywords,
+        EXISTS (
+          SELECT 1 FROM "Project_Article_Bookmark" pab
+          WHERE pab.article_id = a.article_id 
+            AND pab.project_id = $${pIdIndex} 
+            AND pab.user_id = $${uIdIndex}
+        ) AS "isBookmarked"
       FROM "Article" a
       LEFT JOIN "Issue" i ON a.issue_id = i.issue_id
       LEFT JOIN "Volume" v ON i.volume_id = v.volume_id
       LEFT JOIN "Journal" j ON v.journal_id = j.journal_id
       WHERE COALESCE(a.is_deleted, false) = false AND ${whereClause}
       ORDER BY a.publication_year DESC NULLS LAST, a.created_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}
+      LIMIT $${limitIndex} OFFSET $${offsetIndex}
     `;
 
     const dataRes = await client.query(dataQuery, params);
@@ -150,7 +166,8 @@ export async function getCuratedArticles(projectId, options = {}) {
       isOpenAccess: row.isOpenAccess === true || row.isOpenAccess === 'true' || row.isopenaccess === true || row.isopenaccess === 'true' || row.is_open_access === true,
       authors: row.authors || 'Unknown Authors',
       keywords: row.keywords || '',
-      isBookmarked: false // Default to false as there's no bookmark table yet
+      doi: row.doi || null,
+      isBookmarked: row.isBookmarked === true || row.isbookmarked === true
     }));
 
     return {

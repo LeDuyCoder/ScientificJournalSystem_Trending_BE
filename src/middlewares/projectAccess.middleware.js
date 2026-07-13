@@ -7,12 +7,14 @@ import logger from '../utils/logger.js';
  */
 export const requireProjectAccess = async (req, res, next) => {
   try {
-    const projectId = req.query.project_id || req.params.project_id || req.body.project_id;
+    const projectId = req.query?.project_id || req.params?.project_id || req.body?.project_id;
     const userId = req.user?.user_id;
 
     if (!projectId) {
+      logger.info(`[AUTH] requireProjectAccess skipped. projectId is undefined.`);
       return next(); // Let the schema validator handle if project_id is missing
     }
+    logger.info(`[AUTH] Checking access for projectId: ${projectId}, userId: ${userId}`);
 
     if (!userId) {
       return res.status(401).json({
@@ -35,7 +37,7 @@ export const requireProjectAccess = async (req, res, next) => {
 
     next();
   } catch (error) {
-    logger.error('[AUTH] Lỗi kiểm tra quyền truy cập project:', error);
+    logger.error(`[AUTH] Lỗi kiểm tra quyền truy cập project (projectId: ${req.query?.project_id || req.params?.project_id || req.body?.project_id}):`, error);
     return res.status(500).json({
       success: false,
       message: 'Đã xảy ra lỗi kiểm tra quyền, vui lòng thử lại sau.'

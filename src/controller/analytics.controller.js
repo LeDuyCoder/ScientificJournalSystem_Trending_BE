@@ -987,7 +987,8 @@ export async function fetchCuratedArticles(req, res, next) {
       to_year,
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 10,
-      is_open_access
+      is_open_access,
+      userId: req.user?.user_id
     });
 
     res.status(200).json({
