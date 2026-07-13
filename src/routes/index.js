@@ -4,6 +4,7 @@ import analyticsRoutes from './analytics.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import searchRoutes from './search.routes.js';
 import chatRoutes from './chat.routes.js';
+import projectArticleRoutes from './projectArticle.routes.js';
 
 import { requireAuth } from '../middlewares/auth.middleware.js';
 import { requireProjectAccess } from '../middlewares/projectAccess.middleware.js';
@@ -17,6 +18,7 @@ router.use('/articles', requireAuth, requireProjectAccess, articlesRoutes);
 router.use('/analytics', requireAuth, requireProjectAccess, analyticsRoutes);
 router.use('/dashboard', requireAuth, requireProjectAccess, dashboardRoutes);
 router.use('/search', requireAuth, searchRoutes);
+router.use('/projects', requireAuth, requireProjectAccess, projectArticleRoutes);
 
 router.use('/api/v1', requireAuth, chatRoutes);
 
