@@ -1,11 +1,9 @@
 import express from 'express';
-
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger/swagger.js';
 import indexRoutes from './routes/index.js';
 import { errorHandler } from './middlewares/error.middleware.js';
-
 
 /**
  * Main Express application instance.
@@ -14,18 +12,30 @@ import { errorHandler } from './middlewares/error.middleware.js';
  */
 const app = express();
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL_TRENDING,
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175'
+].filter(Boolean);
 
 app.use(cors({
-  origin: '*',
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false,
+  credentials: true,
 }));
 
 app.use(express.json());
 
 // Basic health check & routes
 app.use('/', indexRoutes);
+
+// Swagger JSON spec endpoint (for Postman import or direct access)
+app.get('/api-docs.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
 
 // Swagger UI
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -39,6 +49,3 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 export default app;
-
-
-

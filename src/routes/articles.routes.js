@@ -1,6 +1,7 @@
 import express from 'express';
 
 import { searchArticles } from '../controller/articles.controller.js';
+import { validateSearchArticles } from '../middlewares/articles.validator.js';
 
 const router = express.Router();
 
@@ -27,9 +28,6 @@ const router = express.Router();
  *     responses:
  *       200:
  *         description: Search results
- */
-router.get('/search', searchArticles);
+ */router.get('/search', validateSearchArticles, searchArticles);
 
 export default router;
-
-
