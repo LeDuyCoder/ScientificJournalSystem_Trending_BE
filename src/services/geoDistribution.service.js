@@ -262,41 +262,49 @@ export async function getGeoDistribution(projectId, filters = {}) {
       const countryIndex = params.length;
 
       querySql = `
+        WITH FilteredArticles AS (
+          SELECT a.article_id, a.issue_id
+          FROM "Article" a
+          WHERE COALESCE(a.is_deleted, false) = false
+            ${whereClause}
+        )
         SELECT 
           country_zone.code AS "countryCode",
           country_zone.name AS "countryName",
           region_zone.code AS "regionCode",
           region_zone.name AS "regionName",
-          COUNT(DISTINCT a.article_id)::integer AS count
-        FROM "Article" a
-        JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
+          COUNT(DISTINCT fa.article_id)::integer AS count
+        FROM FilteredArticles fa
+        JOIN "Issue" i ON fa.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
         JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
         JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
         JOIN "Zone" country_zone ON j.country = country_zone.zone_id AND country_zone.type = 'COUNTRY'
         JOIN "Zone" region_zone ON j.region = region_zone.zone_id AND region_zone.type = 'REGION'
-        WHERE COALESCE(a.is_deleted, false) = false
-          AND (
+        WHERE (
             country_zone.zone_id::text = $${countryIndex}
             OR LOWER(country_zone.name) = LOWER($${countryIndex})
             OR UPPER(country_zone.code) = UPPER($${countryIndex})
             OR UPPER(country_zone.iso_code) = UPPER($${countryIndex})
           )
-          ${whereClause}
         GROUP BY country_zone.code, country_zone.name, region_zone.code, region_zone.name
         ORDER BY count DESC
       `;
     } else {
       querySql = `
+        WITH FilteredArticles AS (
+          SELECT a.article_id, a.issue_id
+          FROM "Article" a
+          WHERE COALESCE(a.is_deleted, false) = false
+            ${whereClause}
+        )
         SELECT 
           z.code AS "countryCode",
-          COUNT(DISTINCT a.article_id)::integer AS count
-        FROM "Article" a
-        JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
+          COUNT(DISTINCT fa.article_id)::integer AS count
+        FROM FilteredArticles fa
+        JOIN "Issue" i ON fa.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
         JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
         JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
         JOIN "Zone" z ON j.country = z.zone_id AND z.type = 'COUNTRY'
-        WHERE COALESCE(a.is_deleted, false) = false
-          ${whereClause}
         GROUP BY z.code
         ORDER BY count DESC
       `;

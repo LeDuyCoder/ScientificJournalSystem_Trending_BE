@@ -10,7 +10,7 @@ import { getDashboardStats } from '../services/dashboard.service.js';
  */
 export async function getDashboardStatsHandler(req, res, next) {
     try {
-        const { project_id } = req.validatedQuery;
+        const { project_id } = req.validatedQuery || req.query;
 
         const filters = {
             projectId: project_id,

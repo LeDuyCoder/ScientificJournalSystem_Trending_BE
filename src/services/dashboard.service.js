@@ -152,25 +152,42 @@ function prepareFilters(filters) {
  * @param {string} [filters.projectId] - ID của project.
  * @returns {Promise<DashboardStats>}
  */
+
+function buildSubjectScopeSql(paramIndex) {
+    return `
+    (
+      EXISTS (
+        SELECT 1
+        FROM "Topic" primary_topic
+        WHERE primary_topic.topic_id = a.primary_topic
+          AND primary_topic.subject_category_id = ANY($${paramIndex}::bigint[])
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM "Sub_Topic" st
+        JOIN "Topic" sub_topic
+          ON st.topic_id = sub_topic.topic_id
+        WHERE st.article_id = a.article_id
+          AND sub_topic.subject_category_id = ANY($${paramIndex}::bigint[])
+      )
+    )
+  `;
+}
+
+function buildKeywordScopeSql(paramIndex) {
+    return `
+    EXISTS (
+      SELECT 1
+      FROM "Keyword_Article" ka
+      WHERE ka.article_id = a.article_id
+        AND ka.keyword_id = ANY($${paramIndex}::bigint[])
+    )
+  `;
+}
+
 export async function getDashboardStats(filters = {}) {
     const { projectId } = filters;
-    let subjectArea = '';
-    let keywordIds = [];
-    let keywordNamesLower = [];
-
-    // Nếu có projectId, lấy scope từ PostgreSQL
-    if (projectId) {
-        const pgClient = await pool.connect();
-        try {
-            const scope = await getProjectScope(pgClient, projectId);
-            subjectArea = scope.subjectAreaName;
-            const preparedKeywords = prepareFilters({ keywords: scope.keywordNames });
-            keywordIds = preparedKeywords.keywordIds;
-            keywordNamesLower = preparedKeywords.keywordNamesLower;
-        } finally {
-            pgClient.release();
-        }
-    }
+    const { currentYear, previousYear } = getPeriodBounds();
 
     // ── 1. Tạo cache key động dựa trên bộ lọc ──
     const filterParts = [];
@@ -184,148 +201,116 @@ export async function getDashboardStats(filters = {}) {
             : CACHE_KEY;
 
     // --- Bắt đầu logic Cache ---
-    // 2. Kiểm tra cache Redis trước khi truy vấn DB
     try {
         const cached = await redisGet(dynamicCacheKey);
         if (cached) {
-            // Cache HIT: Dữ liệu tồn tại trong Redis, trả về ngay lập tức
             console.log(`[Redis] Dashboard stats cache HIT for key: ${dynamicCacheKey}`);
             return JSON.parse(cached); // Cache HIT
         }
-        // Cache MISS: Không tìm thấy dữ liệu, tiếp tục truy vấn Neo4j
         console.log(`[Redis] Dashboard stats cache MISS for key: ${dynamicCacheKey}`);
     } catch (redisErr) {
         console.warn('[Dashboard] Redis không khả dụng, bỏ quan việc đọc dữ liệu từ cache:', redisErr.message);
     }
     // --- Kết thúc logic đọc Cache ---
 
-    // ── 3. Kiểm tra cấu hình Neo4j driver ───────────────────────────────────────────────────
-    const driver = neo4jDriver;
-    if (!driver) {
-        throw new Error(
-            'Neo4j driver chưa được cấu hình. Vui lòng thiết lập các biến môi trường NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD.'
-        );
-    }
-
-    // ── 4. Thiết lập các tham số chu kỳ thời gian ────────────────────────────────────────────────
-    const {
-        currentYear, previousYear,
-        currentStart, currentEnd,
-        previousStart, previousEnd,
-    } = getPeriodBounds();
-
-    // ── 5. Xây dựng động các câu truy vấn Cypher và tham số lọc ──────────────────────────────
-    let articleFilter = '';
-    let journalFilter = '';
-    let authorFilter = '';
-    let citationFilter = '';
-
-    if (subjectArea) {
-        articleFilter += ` AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) } `;
-        authorFilter += ` AND EXISTS { MATCH (au)-[:WRITES]->(a:Article) WHERE coalesce(a.is_deleted, false) = false AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) } } `;
-        citationFilter += `
-            AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) }
-            AND EXISTS { MATCH (b)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) }
-        `;
-        journalFilter += `
-            AND EXISTS {
-                MATCH (a:Article)-[:PUBLISHED_IN]->(j)
-                WHERE coalesce(a.is_deleted, false) = false
-                  AND EXISTS { MATCH (a)-[:HAS_TOPIC|HAS_KEYWORD]->(n) WHERE toLower(n.name) = toLower($subjectArea) }
-            }
-        `;
-    }
-
-    if (keywordIds.length > 0 || keywordNamesLower.length > 0) {
-        const kCond = `(toInteger(k.id) IN $keywordIds OR k.id IN $keywordIds OR k.name IN $keywordIds OR toLower(k.name) IN $keywordNamesLower)`;
-        articleFilter += ` AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} } `;
-        authorFilter += ` AND EXISTS { MATCH (au)-[:WRITES]->(a:Article) WHERE coalesce(a.is_deleted, false) = false AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} } } `;
-        citationFilter += `
-            AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} }
-            AND EXISTS { MATCH (b)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} }
-        `;
-        journalFilter += `
-            AND EXISTS {
-                MATCH (a:Article)-[:PUBLISHED_IN]->(j)
-                WHERE coalesce(a.is_deleted, false) = false
-                  AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE ${kCond} }
-            }
-        `;
-    }
-
-    const params = {
-        currentStart, currentEnd,
-        previousStart, previousEnd,
-        currentYear, previousYear,
-        subjectArea,
-        keywordIds, keywordNamesLower,
-    };
-
-    const ARTICLES_STATS_QUERY = `
-      MATCH (a:Article)
-      WHERE coalesce(a.is_deleted, false) = false ${articleFilter}
-      WITH
-        count(a) AS totalValue,
-        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $currentYear THEN 1 END) AS currentCount,
-        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $previousYear THEN 1 END) AS previousCount
-      RETURN totalValue, currentCount, previousCount
-    `;
-
-    const JOURNALS_STATS_QUERY = `
-      MATCH (j:Journal)
-      WHERE coalesce(j.is_deleted, false) = false ${journalFilter}
-      WITH
-        count(j) AS totalValue,
-        count(CASE WHEN j.openalex_synced_at IS NOT NULL AND datetime(j.openalex_synced_at) >= datetime($currentStart) AND datetime(j.openalex_synced_at) <  datetime($currentEnd) THEN 1 END) AS currentCount,
-        count(CASE WHEN j.openalex_synced_at IS NOT NULL AND datetime(j.openalex_synced_at) >= datetime($previousStart) AND datetime(j.openalex_synced_at) <  datetime($previousEnd) THEN 1 END) AS previousCount
-      RETURN totalValue, currentCount, previousCount
-    `;
-
-    const AUTHORS_STATS_QUERY = `
-      MATCH (au:Author)
-      WHERE coalesce(au.is_deleted, false) = false ${authorFilter}
-      WITH
-        count(au) AS totalValue,
-        count(CASE WHEN au.openalex_synced_at IS NOT NULL AND datetime(au.openalex_synced_at) >= datetime($currentStart) AND datetime(au.openalex_synced_at) <  datetime($currentEnd) THEN 1 END) AS currentCount,
-        count(CASE WHEN au.openalex_synced_at IS NOT NULL AND datetime(au.openalex_synced_at) >= datetime($previousStart) AND datetime(au.openalex_synced_at) <  datetime($previousEnd) THEN 1 END) AS previousCount
-      RETURN totalValue, currentCount, previousCount
-    `;
-
-    const CITATIONS_STATS_QUERY = `
-      MATCH (a:Article)-[r:REFERENCES]->(b:Article)
-      WHERE coalesce(a.is_deleted, false) = false AND coalesce(b.is_deleted, false) = false ${citationFilter}
-      WITH
-        count(r) AS totalValue,
-        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $currentYear THEN 1 END) AS currentCount,
-        count(CASE WHEN a.publication_year IS NOT NULL AND toInteger(a.publication_year) = $previousYear THEN 1 END) AS previousCount
-      RETURN totalValue, currentCount, previousCount
-    `;
-
-    const session = driver.session({ defaultAccessMode: 'READ' });
-
     try {
-        const articlesResult = await session.run(ARTICLES_STATS_QUERY, params);
-        const journalsResult = await session.run(JOURNALS_STATS_QUERY, params);
-        const authorsResult = await session.run(AUTHORS_STATS_QUERY, params);
-        const citationsResult = await session.run(CITATIONS_STATS_QUERY, params);
+        let scopeFilter = 'TRUE';
+        const params = [currentYear, previousYear];
 
-        // ── 6. Phân tích cú pháp của từng kết quả trả về ─────────────────────────────────────────────────
-        const parse = (result) => {
-            const record = result.records[0];
-            return {
-                total: toSafeNumber(record?.get('totalValue')),
-                current: toSafeNumber(record?.get('currentCount')),
-                previous: toSafeNumber(record?.get('previousCount')),
-            };
+        if (projectId) {
+            // Sử dụng pool thay vì pgClient để tránh lỗi chạy song song trên cùng 1 connection
+            const scope = await getProjectScope(pool, projectId);
+            const sqlFilters = [];
+
+            if (scope.subjectCategoryIds && scope.subjectCategoryIds.length > 0) {
+                params.push(scope.subjectCategoryIds);
+                sqlFilters.push(buildSubjectScopeSql(params.length));
+            }
+            if (scope.keywordIds && scope.keywordIds.length > 0) {
+                params.push(scope.keywordIds);
+                sqlFilters.push(buildKeywordScopeSql(params.length));
+            }
+
+            if (sqlFilters.length > 0) {
+                scopeFilter = `(${sqlFilters.join(' OR ')})`;
+            } else {
+                scopeFilter = 'FALSE'; // Project has no criteria
+            }
+        }
+
+        // ── 2. Các câu truy vấn PostgreSQL ──
+        const ARTICLES_QUERY = `
+            SELECT
+                COUNT(DISTINCT a.article_id) AS total_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN a.article_id END) AS current_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN a.article_id END) AS previous_val
+            FROM "Article" a
+            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
+        `;
+
+        const CITATIONS_QUERY = `
+            SELECT
+                COALESCE(SUM(a.citation_count), 0) AS total_val,
+                COALESCE(SUM(CASE WHEN a.publication_year = $1 THEN a.citation_count ELSE 0 END), 0) AS current_val,
+                COALESCE(SUM(CASE WHEN a.publication_year = $2 THEN a.citation_count ELSE 0 END), 0) AS previous_val
+            FROM "Article" a
+            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
+        `;
+
+        const JOURNALS_QUERY = `
+            SELECT
+                COUNT(DISTINCT j.journal_id) AS total_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN j.journal_id END) AS current_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN j.journal_id END) AS previous_val
+            FROM "Journal" j
+            JOIN "Volume" v ON j.journal_id = v.journal_id
+            JOIN "Issue" iss ON v.volume_id = iss.volume_id
+            JOIN "Article" a ON iss.issue_id = a.issue_id
+            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false AND COALESCE(j.is_deleted, false) = false
+        `;
+
+        const AUTHORS_QUERY = `
+            SELECT
+                COUNT(DISTINCT au.author_id) AS total_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN au.author_id END) AS current_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN au.author_id END) AS previous_val
+            FROM "Author" au
+            JOIN "Author_Article" aa ON au.author_id = aa.author_id
+            JOIN "Article" a ON aa.article_id = a.article_id
+            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false AND COALESCE(au.is_deleted, false) = false
+        `;
+
+        // ── 3. Chạy song song cả 4 truy vấn trên các connection riêng rẽ từ pool ──
+        const [articlesRes, citationsRes, journalsRes, authorsRes] = await Promise.all([
+            pool.query(ARTICLES_QUERY, params),
+            pool.query(CITATIONS_QUERY, params),
+            pool.query(JOURNALS_QUERY, params),
+            pool.query(AUTHORS_QUERY, params),
+        ]);
+
+        const articles = {
+            total: Number(articlesRes.rows[0].total_val) || 0,
+            current: Number(articlesRes.rows[0].current_val) || 0,
+            previous: Number(articlesRes.rows[0].previous_val) || 0
+        };
+        const citations = {
+            total: Number(citationsRes.rows[0].total_val) || 0,
+            current: Number(citationsRes.rows[0].current_val) || 0,
+            previous: Number(citationsRes.rows[0].previous_val) || 0
+        };
+        const journals = {
+            total: Number(journalsRes.rows[0].total_val) || 0,
+            current: Number(journalsRes.rows[0].current_val) || 0,
+            previous: Number(journalsRes.rows[0].previous_val) || 0
+        };
+        const authors = {
+            total: Number(authorsRes.rows[0].total_val) || 0,
+            current: Number(authorsRes.rows[0].current_val) || 0,
+            previous: Number(authorsRes.rows[0].previous_val) || 0
         };
 
-        const articles = parse(articlesResult);
-        const journals = parse(journalsResult);
-        const authors = parse(authorsResult);
-        const citations = parse(citationsResult);
+        // ── 4. Tổng hợp cấu trúc dữ liệu phản hồi theo công thức nghiệp vụ ──
 
-        // ── 7. Tổng hợp cấu trúc dữ liệu phản hồi theo công thức nghiệp vụ ──────────────────
-        
         // Mật độ trích dẫn (densityIndex) = Tổng số trích dẫn / Tổng số bài báo phát hành
         const densityValue = articles.total > 0
             ? Math.round((citations.total / articles.total) * 100) / 100
@@ -351,7 +336,7 @@ export async function getDashboardStats(filters = {}) {
 
         // Số lượng dịch chuyển (totalRelocated) = Ước lượng động tỷ lệ với 4.634% tổng số tác giả (Authors)
         const relocatedValue = Math.round(authors.total * 0.04634);
-        
+
         // Tốc độ tăng trưởng dịch chuyển: Tính tương ứng tỷ lệ thuận với tăng trưởng của Authors
         const authorsGrowth = calcGrowthRate(authors.current, authors.previous);
         const relocatedGrowth = authorsGrowth !== 0 ? Math.round((authorsGrowth - 16.3) * 10) / 10 : -2.1;
@@ -377,7 +362,6 @@ export async function getDashboardStats(filters = {}) {
         };
 
         // --- Bắt đầu logic ghi Cache ---
-        // 8. Lưu kết quả vào cache & trả về dữ liệu
         try {
             await redisSet(dynamicCacheKey, JSON.stringify(stats), CACHE_TTL);
             console.log(`[Redis] Dashboard stats cached successfully for key: ${dynamicCacheKey}`);
@@ -386,8 +370,9 @@ export async function getDashboardStats(filters = {}) {
         }
 
         return stats;
-    } finally {
-        await session.close();
+    } catch (err) {
+        console.error('[Dashboard] Error in getDashboardStats:', err);
+        throw err;
     }
 }
 
