@@ -128,55 +128,125 @@ export async function getTopicIntensityMatrix(options = {}) {
       return [];
     }
 
-    // ════════════════════════════════════════════════════════════
-    // STEP 2: Build article filter (same pattern as journal-ranking)
-    // ════════════════════════════════════════════════════════════
+    // 2. Build Article Filter using CTE
+    const cteParts = [];
     const params = [];
-    const articleFilters = [];
-
-    // Project Scope filter (OR logic between categories and keywords)
-    const scopeConditions = [];
-    if (scopeCategoryIds.length > 0) {
-      params.push(scopeCategoryIds);
-      scopeConditions.push(`(
-        EXISTS (SELECT 1 FROM "Topic" t WHERE t.topic_id = a.primary_topic AND t.subject_category_id = ANY($${params.length}::bigint[]))
-        OR EXISTS (SELECT 1 FROM "Sub_Topic" st JOIN "Topic" t ON st.topic_id = t.topic_id WHERE st.article_id = a.article_id AND t.subject_category_id = ANY($${params.length}::bigint[]))
-      )`);
+    
+    // Project Scope topics / keywords
+    if (scopeCategoryIds.length > 0 || scopeKeywordIds.length > 0) {
+      const scopeSelects = [];
+      if (scopeCategoryIds.length > 0) {
+        params.push(scopeCategoryIds);
+        const catIdx = params.length;
+        scopeSelects.push(`
+          SELECT a.article_id
+          FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id
+          FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+        `);
+      }
+      if (scopeKeywordIds.length > 0) {
+        params.push(scopeKeywordIds);
+        const kwIdx = params.length;
+        scopeSelects.push(`
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${kwIdx}::bigint[])
+        `);
+      }
+      cteParts.push(`project_articles AS (${scopeSelects.join(' UNION ')})`);
     }
-    if (scopeKeywordIds.length > 0) {
-      params.push(scopeKeywordIds);
-      scopeConditions.push(`EXISTS (SELECT 1 FROM "Keyword_Article" ka WHERE ka.article_id = a.article_id AND ka.keyword_id = ANY($${params.length}::bigint[]))`);
-    }
-    articleFilters.push(`(${scopeConditions.join(' OR ')})`);
 
-    // Additional client filters (AND - Intersection logic)
+    // Custom Subject Area Filter
     if (subject_area) {
-      params.push(subject_area.trim().toLowerCase());
-      articleFilters.push(`EXISTS (
-        SELECT 1 FROM "Topic" t
-        JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-        JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-        WHERE (t.topic_id = a.primary_topic OR EXISTS(SELECT 1 FROM "Sub_Topic" st WHERE st.article_id = a.article_id AND st.topic_id = t.topic_id))
-        AND LOWER(sa.display_name) = $${params.length}
-      )`);
+      const saRes = await client.query(
+        `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
+        [subject_area.trim()]
+      );
+
+      if (saRes.rows.length > 0) {
+        const saId = saRes.rows[0].subject_area_id;
+        const scRes = await client.query(
+          `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
+          [saId]
+        );
+        const filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+
+        if (filterCategoryIds.length > 0) {
+          params.push(filterCategoryIds);
+          const filterCatIdx = params.length;
+          cteParts.push(`filter_sa_articles AS (
+            SELECT a.article_id
+            FROM "Article" a
+            JOIN "Topic" t ON a.primary_topic = t.topic_id
+            WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+            UNION
+            SELECT st.article_id
+            FROM "Sub_Topic" st
+            JOIN "Topic" t ON st.topic_id = t.topic_id
+            WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[])
+          )`);
+        }
+      }
     }
+
+    // Custom Keyword Filter
     if (keywordList.length > 0) {
-      params.push(keywordList.map(k => k.toLowerCase()));
-      articleFilters.push(`EXISTS (
-        SELECT 1 FROM "Keyword_Article" ka JOIN "Keyword" k ON ka.keyword_id = k.keyword_id
-        WHERE ka.article_id = a.article_id AND LOWER(k.display_name) = ANY($${params.length}::text[])
-      )`);
+      const kwRes = await client.query(
+        `SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`,
+        [keywordList.map(s => s.toLowerCase())]
+      );
+      const filterKeywordIds = kwRes.rows.map(r => Number(r.keyword_id));
+
+      if (filterKeywordIds.length > 0) {
+        params.push(filterKeywordIds);
+        const filterKwIdx = params.length;
+        cteParts.push(`filter_kw_articles AS (
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+        )`);
+      }
     }
+
+    // Year range filters
+    const yearFilters = [];
     if (fromYear) {
       params.push(fromYear);
-      articleFilters.push(`a.publication_year >= $${params.length}`);
+      yearFilters.push(`a.publication_year >= $${params.length}`);
     }
     if (toYear) {
       params.push(toYear);
-      articleFilters.push(`a.publication_year <= $${params.length}`);
+      yearFilters.push(`a.publication_year <= $${params.length}`);
+    }
+    const yearSql = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
+    // Join them all to form `filtered_articles`
+    const joins = [];
+    if (scopeCategoryIds.length > 0 || scopeKeywordIds.length > 0) {
+      joins.push(`JOIN project_articles pa ON a.article_id = pa.article_id`);
+    }
+    if (subject_area) {
+      joins.push(`JOIN filter_sa_articles fsa ON a.article_id = fsa.article_id`);
+    }
+    if (keywordList.length > 0) {
+      joins.push(`JOIN filter_kw_articles fkw ON a.article_id = fkw.article_id`);
     }
 
-    const whereClause = articleFilters.join(' AND ');
+    cteParts.push(`filtered_articles AS (
+      SELECT a.article_id, a.publication_year, a.primary_topic
+      FROM "Article" a
+      ${joins.join('\n      ')}
+      WHERE COALESCE(a.is_deleted, false) = false
+        ${yearSql}
+    )`);
+
+    const cteSql = `WITH ${cteParts.join(',\n')}`;
 
     // ════════════════════════════════════════════════════════════
     // STEP 3: Select Top Rows (Authors) by total article count
@@ -187,30 +257,28 @@ export async function getTopicIntensityMatrix(options = {}) {
     let topRowsSql = '';
     if (row_type === 'author') {
       topRowsSql = `
+        ${cteSql}
         SELECT au.author_id AS row_id, 
                COALESCE(au.display_name, 'Unknown Author') AS row_name, 
                COUNT(DISTINCT a.article_id) AS total_articles
-        FROM "Article" a
+        FROM filtered_articles a
         JOIN "Author_Article" aa ON a.article_id = aa.article_id
         JOIN "Author" au ON aa.author_id = au.author_id
-        WHERE COALESCE(a.is_deleted, false) = false
-          AND ${whereClause}
         GROUP BY au.author_id, au.display_name
         ORDER BY total_articles DESC
         LIMIT $${topRowsParamIdx}
       `;
     } else {
       topRowsSql = `
+        ${cteSql}
         SELECT inst.institution_id AS row_id, 
                COALESCE(inst.display_name, 'Unknown Institution') AS row_name, 
                COUNT(DISTINCT a.article_id) AS total_articles
-        FROM "Article" a
+        FROM filtered_articles a
         JOIN "Author_Article" aa ON a.article_id = aa.article_id
         JOIN "Institution_Author" ia ON aa.author_id = ia.author_id AND a.publication_year = ia.year
         JOIN "Institution" inst ON ia.institution_id = inst.institution_id
-        WHERE COALESCE(a.is_deleted, false) = false
-          AND COALESCE(inst.is_deleted, false) = false
-          AND ${whereClause}
+        WHERE COALESCE(inst.is_deleted, false) = false
         GROUP BY inst.institution_id, inst.display_name
         ORDER BY total_articles DESC
         LIMIT $${topRowsParamIdx}
@@ -233,12 +301,7 @@ export async function getTopicIntensityMatrix(options = {}) {
     const topicParamIdx = topicParams.length;
 
     const topTopicsSql = `
-      WITH filtered_articles AS (
-        SELECT a.article_id, a.primary_topic
-        FROM "Article" a
-        WHERE COALESCE(a.is_deleted, false) = false
-          AND ${whereClause}
-      ),
+      ${cteSql},
       article_topics AS (
         SELECT article_id, primary_topic AS topic_id
         FROM filtered_articles
@@ -280,12 +343,7 @@ export async function getTopicIntensityMatrix(options = {}) {
     let matrixSql = '';
     if (row_type === 'author') {
       matrixSql = `
-        WITH filtered_articles AS (
-          SELECT a.article_id, a.primary_topic
-          FROM "Article" a
-          WHERE COALESCE(a.is_deleted, false) = false
-            AND ${whereClause}
-        ),
+        ${cteSql},
         article_topics AS (
           SELECT article_id, primary_topic AS topic_id
           FROM filtered_articles
@@ -308,12 +366,7 @@ export async function getTopicIntensityMatrix(options = {}) {
       `;
     } else {
       matrixSql = `
-        WITH filtered_articles AS (
-          SELECT a.article_id, a.primary_topic, a.publication_year
-          FROM "Article" a
-          WHERE COALESCE(a.is_deleted, false) = false
-            AND ${whereClause}
-        ),
+        ${cteSql},
         article_topics AS (
           SELECT article_id, primary_topic AS topic_id, publication_year
           FROM filtered_articles

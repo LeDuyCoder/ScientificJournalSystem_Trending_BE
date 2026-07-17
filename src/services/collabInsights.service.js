@@ -104,61 +104,130 @@ export async function getCollaborationMetrics(projectId, filters = {}) {
       return getEmptyMetrics();
     }
 
-    // 2. Build Article Filter
+    // 2. Build Article Filter using CTE
+    const cteParts = [];
     const params = [];
-    const articleFilters = [];
-    const scopeConditions = [];
-
-    if (scopeCategoryIds.length > 0) {
-      params.push(scopeCategoryIds);
-      scopeConditions.push(`(
-        EXISTS (SELECT 1 FROM "Topic" t WHERE t.topic_id = a.primary_topic AND t.subject_category_id = ANY($${params.length}::bigint[]))
-        OR EXISTS (SELECT 1 FROM "Sub_Topic" st JOIN "Topic" t ON st.topic_id = t.topic_id WHERE st.article_id = a.article_id AND t.subject_category_id = ANY($${params.length}::bigint[]))
-      )`);
+    
+    // Project Scope topics / keywords
+    if (scopeCategoryIds.length > 0 || scopeKeywordIds.length > 0) {
+      const scopeSelects = [];
+      if (scopeCategoryIds.length > 0) {
+        params.push(scopeCategoryIds);
+        const catIdx = params.length;
+        scopeSelects.push(`
+          SELECT a.article_id
+          FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id
+          FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+        `);
+      }
+      if (scopeKeywordIds.length > 0) {
+        params.push(scopeKeywordIds);
+        const kwIdx = params.length;
+        scopeSelects.push(`
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${kwIdx}::bigint[])
+        `);
+      }
+      cteParts.push(`project_articles AS (${scopeSelects.join(' UNION ')})`);
     }
-    if (scopeKeywordIds.length > 0) {
-      params.push(scopeKeywordIds);
-      scopeConditions.push(`EXISTS (SELECT 1 FROM "Keyword_Article" ka WHERE ka.article_id = a.article_id AND ka.keyword_id = ANY($${params.length}::bigint[]))`);
-    }
-    articleFilters.push(`(${scopeConditions.join(' OR ')})`);
 
-    const keywordList = (keywords || '').split(',').map(s => s.trim()).filter(Boolean);
-
+    // Custom Subject Area Filter
     if (subject_area) {
-      params.push(subject_area.trim().toLowerCase());
-      articleFilters.push(`EXISTS (
-        SELECT 1 FROM "Topic" t
-        JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-        JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-        WHERE (t.topic_id = a.primary_topic OR EXISTS(SELECT 1 FROM "Sub_Topic" st WHERE st.article_id = a.article_id AND st.topic_id = t.topic_id))
-        AND LOWER(sa.display_name) = $${params.length}
-      )`);
+      const saRes = await client.query(
+        `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
+        [subject_area.trim()]
+      );
+
+      if (saRes.rows.length > 0) {
+        const saId = saRes.rows[0].subject_area_id;
+        const scRes = await client.query(
+          `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
+          [saId]
+        );
+        const filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+
+        if (filterCategoryIds.length > 0) {
+          params.push(filterCategoryIds);
+          const filterCatIdx = params.length;
+          cteParts.push(`filter_sa_articles AS (
+            SELECT a.article_id
+            FROM "Article" a
+            JOIN "Topic" t ON a.primary_topic = t.topic_id
+            WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+            UNION
+            SELECT st.article_id
+            FROM "Sub_Topic" st
+            JOIN "Topic" t ON st.topic_id = t.topic_id
+            WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[])
+          )`);
+        }
+      }
     }
+
+    // Custom Keyword Filter
+    const keywordList = (keywords || '').split(',').map(s => s.trim()).filter(Boolean);
     if (keywordList.length > 0) {
-      params.push(keywordList.map(k => k.toLowerCase()));
-      articleFilters.push(`EXISTS (
-        SELECT 1 FROM "Keyword_Article" ka JOIN "Keyword" k ON ka.keyword_id = k.keyword_id
-        WHERE ka.article_id = a.article_id AND LOWER(k.display_name) = ANY($${params.length}::text[])
-      )`);
+      const kwRes = await client.query(
+        `SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`,
+        [keywordList.map(s => s.toLowerCase())]
+      );
+      const filterKeywordIds = kwRes.rows.map(r => Number(r.keyword_id));
+
+      if (filterKeywordIds.length > 0) {
+        params.push(filterKeywordIds);
+        const filterKwIdx = params.length;
+        cteParts.push(`filter_kw_articles AS (
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+        )`);
+      }
     }
+
+    // Year range filters
+    const yearFilters = [];
     if (from_year) {
-      params.push(from_year);
-      articleFilters.push(`a.publication_year >= $${params.length}`);
+      params.push(Number(from_year));
+      yearFilters.push(`a.publication_year >= $${params.length}`);
     }
     if (to_year) {
-      params.push(to_year);
-      articleFilters.push(`a.publication_year <= $${params.length}`);
+      params.push(Number(to_year));
+      yearFilters.push(`a.publication_year <= $${params.length}`);
+    }
+    const yearSql = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
+    // Join them all to form `filtered_articles`
+    const joins = [];
+    if (scopeCategoryIds.length > 0 || scopeKeywordIds.length > 0) {
+      joins.push(`JOIN project_articles pa ON a.article_id = pa.article_id`);
+    }
+    if (subject_area) {
+      joins.push(`JOIN filter_sa_articles fsa ON a.article_id = fsa.article_id`);
+    }
+    if (keywordList.length > 0) {
+      joins.push(`JOIN filter_kw_articles fkw ON a.article_id = fkw.article_id`);
     }
 
-    const whereClause = articleFilters.join(' AND ');
+    cteParts.push(`filtered_articles AS (
+      SELECT a.article_id, a.publication_year, a.issue_id, a.primary_topic
+      FROM "Article" a
+      ${joins.join('\n      ')}
+      WHERE COALESCE(a.is_deleted, false) = false
+        ${yearSql}
+    )`);
+
+    const cteSql = `WITH ${cteParts.join(',\n')}`;
 
     // 3. Execute massive CTE query for metrics
     const query = `
-      WITH filtered_articles AS (
-        SELECT a.article_id, a.publication_year, a.issue_id, a.primary_topic
-        FROM "Article" a
-        WHERE COALESCE(a.is_deleted, false) = false AND ${whereClause}
-      ),
+      ${cteSql},
       article_institutions AS (
         SELECT DISTINCT fa.article_id, ia.institution_id, fa.publication_year
         FROM filtered_articles fa

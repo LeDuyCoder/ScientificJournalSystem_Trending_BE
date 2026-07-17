@@ -57,48 +57,40 @@ export async function getProductivityMatrix(projectId, filters = {}) {
       return defaultResponse;
     }
 
+    const cteParts = [];
     const params = [];
-    const sqlFilters = [];
-
-    // Project scope filters: categories OR keywords
-    const scopeConditions = [];
-    if (scope.subjectCategoryIds.length > 0) {
-      params.push(scope.subjectCategoryIds);
-      const catIndex = params.length;
-      scopeConditions.push(`
-        (
-          EXISTS (
-            SELECT 1 FROM "Topic" primary_topic
-            WHERE primary_topic.topic_id = a.primary_topic
-              AND primary_topic.subject_category_id = ANY($${catIndex}::bigint[])
-          )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" st
-            JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
-            WHERE st.article_id = a.article_id
-              AND sub_topic.subject_category_id = ANY($${catIndex}::bigint[])
-          )
-        )
-      `);
+    
+    // 1. Project Scope topics / keywords
+    if (scope.subjectCategoryIds.length > 0 || scope.keywordIds.length > 0) {
+      const scopeSelects = [];
+      if (scope.subjectCategoryIds.length > 0) {
+        params.push(scope.subjectCategoryIds);
+        const catIdx = params.length;
+        scopeSelects.push(`
+          SELECT a.article_id
+          FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id
+          FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+        `);
+      }
+      if (scope.keywordIds.length > 0) {
+        params.push(scope.keywordIds);
+        const kwIdx = params.length;
+        scopeSelects.push(`
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${kwIdx}::bigint[])
+        `);
+      }
+      cteParts.push(`project_articles AS (${scopeSelects.join(' UNION ')})`);
     }
 
-    if (scope.keywordIds.length > 0) {
-      params.push(scope.keywordIds);
-      const kwIndex = params.length;
-      scopeConditions.push(`
-        EXISTS (
-          SELECT 1 FROM "Keyword_Article" ka
-          WHERE ka.article_id = a.article_id
-            AND ka.keyword_id = ANY($${kwIndex}::bigint[])
-        )
-      `);
-    }
-
-    if (scopeConditions.length > 0) {
-      sqlFilters.push(`(${scopeConditions.join(' OR ')})`);
-    }
-
-    // Client filter: subject_area
+    // 2. Custom Subject Area Filter
     if (subjectArea) {
       const saRes = await client.query(
         `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
@@ -111,7 +103,6 @@ export async function getProductivityMatrix(projectId, filters = {}) {
       }
 
       const saId = saRes.rows[0].subject_area_id;
-
       const scRes = await client.query(
         `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
         [saId]
@@ -122,27 +113,23 @@ export async function getProductivityMatrix(projectId, filters = {}) {
         logger.info(`Subject area filter '${subjectArea}' has no categories. Returning empty productivity matrix.`);
         return defaultResponse;
       }
-
+      
       params.push(filterCategoryIds);
-      const filterCatIndex = params.length;
-      sqlFilters.push(`
-        (
-          EXISTS (
-            SELECT 1 FROM "Topic" ft
-            WHERE ft.topic_id = a.primary_topic
-              AND ft.subject_category_id = ANY($${filterCatIndex}::bigint[])
-          )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" fst
-            JOIN "Topic" fst_topic ON fst.topic_id = fst_topic.topic_id
-            WHERE fst.article_id = a.article_id
-              AND fst_topic.subject_category_id = ANY($${filterCatIndex}::bigint[])
-          )
-        )
-      `);
+      const filterCatIdx = params.length;
+      cteParts.push(`filter_sa_articles AS (
+        SELECT a.article_id
+        FROM "Article" a
+        JOIN "Topic" t ON a.primary_topic = t.topic_id
+        WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+        UNION
+        SELECT st.article_id
+        FROM "Sub_Topic" st
+        JOIN "Topic" t ON st.topic_id = t.topic_id
+        WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[])
+      )`);
     }
 
-    // Client filter: keywords
+    // 3. Custom Keyword Filter
     if (keywordList.length > 0) {
       const kwRes = await client.query(
         `SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`,
@@ -156,27 +143,47 @@ export async function getProductivityMatrix(projectId, filters = {}) {
       }
 
       params.push(filterKeywordIds);
-      const filterKwIndex = params.length;
-      sqlFilters.push(`
-        EXISTS (
-          SELECT 1 FROM "Keyword_Article" fka
-          WHERE fka.article_id = a.article_id
-            AND fka.keyword_id = ANY($${filterKwIndex}::bigint[])
-        )
-      `);
+      const filterKwIdx = params.length;
+      cteParts.push(`filter_kw_articles AS (
+        SELECT article_id
+        FROM "Keyword_Article"
+        WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+      )`);
     }
 
-    // Client filter: year range (applied in SQL for filtering articles)
+    // Year range filters
+    const yearFilters = [];
     if (fromYear !== undefined && fromYear !== null) {
       params.push(Number(fromYear));
-      sqlFilters.push(`a.publication_year >= $${params.length}`);
+      yearFilters.push(`a.publication_year >= $${params.length}`);
     }
     if (toYear !== undefined && toYear !== null) {
       params.push(Number(toYear));
-      sqlFilters.push(`a.publication_year <= $${params.length}`);
+      yearFilters.push(`a.publication_year <= $${params.length}`);
+    }
+    const yearSql = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
+    // Join them all to form `filtered_articles`
+    const joins = [];
+    if (scope.subjectCategoryIds.length > 0 || scope.keywordIds.length > 0) {
+      joins.push(`JOIN project_articles pa ON a.article_id = pa.article_id`);
+    }
+    if (subjectArea) {
+      joins.push(`JOIN filter_sa_articles fsa ON a.article_id = fsa.article_id`);
+    }
+    if (keywordList.length > 0) {
+      joins.push(`JOIN filter_kw_articles fkw ON a.article_id = fkw.article_id`);
     }
 
-    const whereClause = sqlFilters.length > 0 ? `AND ${sqlFilters.join(' AND ')}` : '';
+    cteParts.push(`filtered_articles AS (
+      SELECT a.article_id, a.publication_year, a.citation_count
+      FROM "Article" a
+      ${joins.join('\n      ')}
+      WHERE COALESCE(a.is_deleted, false) = false
+        ${yearSql}
+    )`);
+
+    const cteSql = `WITH ${cteParts.join(',\n')}`;
 
     let matrixPoints = [];
 
@@ -185,6 +192,7 @@ export async function getProductivityMatrix(projectId, filters = {}) {
     if (isYearRangeSupplied) {
       // 1. If year range is supplied, calculate output = totalArticles / numberOfYears
       const query = `
+        ${cteSql}
         SELECT
           au.author_id AS "authorId",
           au.display_name AS "authorName",
@@ -192,11 +200,9 @@ export async function getProductivityMatrix(projectId, filters = {}) {
           COALESCE(au.h_index, 0)::integer AS "hIndex"
         FROM "Author" au
         JOIN "Author_Article" aa ON au.author_id = aa.author_id
-        JOIN "Article" a ON aa.article_id = a.article_id
-        WHERE COALESCE(a.is_deleted, false) = false
-          AND COALESCE(au.is_deleted, false) = false
+        JOIN filtered_articles a ON aa.article_id = a.article_id
+        WHERE COALESCE(au.is_deleted, false) = false
           AND au.author_id IS NOT NULL
-          ${whereClause}
         GROUP BY au.author_id, au.display_name, au.h_index
       `;
 
@@ -218,7 +224,8 @@ export async function getProductivityMatrix(projectId, filters = {}) {
     } else {
       // 2. If no year range is supplied, calculate output = publications in the newest year of active publications
       const query = `
-        WITH AuthorYearlyCount AS (
+        ${cteSql},
+        AuthorYearlyCount AS (
           SELECT
             au.author_id,
             a.publication_year,
@@ -226,11 +233,9 @@ export async function getProductivityMatrix(projectId, filters = {}) {
             ROW_NUMBER() OVER (PARTITION BY au.author_id ORDER BY a.publication_year DESC) as rn
           FROM "Author" au
           JOIN "Author_Article" aa ON au.author_id = aa.author_id
-          JOIN "Article" a ON aa.article_id = a.article_id
-          WHERE COALESCE(a.is_deleted, false) = false
-            AND COALESCE(au.is_deleted, false) = false
+          JOIN filtered_articles a ON aa.article_id = a.article_id
+          WHERE COALESCE(au.is_deleted, false) = false
             AND au.author_id IS NOT NULL
-            ${whereClause}
           GROUP BY au.author_id, a.publication_year
         )
         SELECT
