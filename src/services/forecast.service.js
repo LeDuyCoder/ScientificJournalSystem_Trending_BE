@@ -111,19 +111,17 @@ function getGrowthRates(yearlyMetrics) {
 function buildSubjectScopeSql(paramIndex) {
   return `
     (
-      EXISTS (
-        SELECT 1
-        FROM "Topic" primary_topic
-        WHERE primary_topic.topic_id = a.primary_topic
-          AND primary_topic.subject_category_id = ANY($${paramIndex}::bigint[])
+      a.primary_topic IN (
+        SELECT topic_id
+        FROM "Topic"
+        WHERE subject_category_id = ANY($${paramIndex}::bigint[])
       )
-      OR EXISTS (
-        SELECT 1
+      OR a.article_id IN (
+        SELECT st.article_id
         FROM "Sub_Topic" st
         JOIN "Topic" sub_topic
           ON st.topic_id = sub_topic.topic_id
-        WHERE st.article_id = a.article_id
-          AND sub_topic.subject_category_id = ANY($${paramIndex}::bigint[])
+        WHERE sub_topic.subject_category_id = ANY($${paramIndex}::bigint[])
       )
     )
   `;
@@ -131,11 +129,10 @@ function buildSubjectScopeSql(paramIndex) {
 
 function buildKeywordScopeSql(paramIndex) {
   return `
-    EXISTS (
-      SELECT 1
+    a.article_id IN (
+      SELECT ka.article_id
       FROM "Keyword_Article" ka
-      WHERE ka.article_id = a.article_id
-        AND ka.keyword_id = ANY($${paramIndex}::bigint[])
+      WHERE ka.keyword_id = ANY($${paramIndex}::bigint[])
     )
   `;
 }
@@ -288,58 +285,53 @@ async function fetchCrossDomainMetrics(client, scope) {
 
   const crossDomainRes = await client.query(
     `
-    WITH article_subjects AS (
+    WITH target_articles AS (
+      SELECT DISTINCT a.article_id, a.citation_count
+      FROM "Keyword_Article" ka
+      JOIN "Article" a ON ka.article_id = a.article_id
+      WHERE ka.keyword_id = ANY($1::bigint[])
+        AND COALESCE(a.is_deleted, false) = false
+    ),
+    article_subjects AS (
       SELECT DISTINCT
-        a.article_id,
+        ta.article_id,
         sa.subject_area_id,
         sa.display_name AS subject_area_name
-      FROM "Article" a
-      JOIN "Topic" t
-        ON a.primary_topic = t.topic_id
-      JOIN "Subject_Category" sc
-        ON t.subject_category_id = sc.subject_category_id
-      JOIN "Subject_Area" sa
-        ON sc.subject_area_id = sa.subject_area_id
-      WHERE COALESCE(a.is_deleted, false) = false
-        AND COALESCE(t.is_deleted, false) = false
+      FROM target_articles ta
+      JOIN "Article" a ON ta.article_id = a.article_id
+      JOIN "Topic" t ON a.primary_topic = t.topic_id
+      JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+      JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+      WHERE COALESCE(t.is_deleted, false) = false
         AND COALESCE(sc.is_deleted, false) = false
         AND COALESCE(sa.is_deleted, false) = false
 
       UNION
 
       SELECT DISTINCT
-        a.article_id,
+        ta.article_id,
         sa.subject_area_id,
         sa.display_name AS subject_area_name
-      FROM "Article" a
-      JOIN "Sub_Topic" st
-        ON a.article_id = st.article_id
-      JOIN "Topic" t
-        ON st.topic_id = t.topic_id
-      JOIN "Subject_Category" sc
-        ON t.subject_category_id = sc.subject_category_id
-      JOIN "Subject_Area" sa
-        ON sc.subject_area_id = sa.subject_area_id
-      WHERE COALESCE(a.is_deleted, false) = false
-        AND COALESCE(t.is_deleted, false) = false
+      FROM target_articles ta
+      JOIN "Sub_Topic" st ON ta.article_id = st.article_id
+      JOIN "Topic" t ON st.topic_id = t.topic_id
+      JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+      JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+      WHERE COALESCE(t.is_deleted, false) = false
         AND COALESCE(sc.is_deleted, false) = false
         AND COALESCE(sa.is_deleted, false) = false
     )
     SELECT
       article_subjects.subject_area_name AS related_subject_area,
       k.display_name AS keyword_name,
-      COUNT(DISTINCT a.article_id) AS article_count,
-      COALESCE(SUM(COALESCE(a.citation_count, 0)), 0) AS citation_count
+      COUNT(DISTINCT ta.article_id) AS article_count,
+      COALESCE(SUM(COALESCE(ta.citation_count, 0)), 0) AS citation_count
     FROM "Keyword_Article" ka
-    JOIN "Keyword" k
-      ON ka.keyword_id = k.keyword_id
-    JOIN "Article" a
-      ON ka.article_id = a.article_id
-    JOIN article_subjects
-      ON article_subjects.article_id = a.article_id
+    JOIN "Keyword" k ON ka.keyword_id = k.keyword_id
+    JOIN target_articles ta ON ka.article_id = ta.article_id
+    JOIN article_subjects ON article_subjects.article_id = ta.article_id
     WHERE ka.keyword_id = ANY($1::bigint[])
       AND article_subjects.subject_area_id <> $2
-      AND COALESCE(a.is_deleted, false) = false
     GROUP BY
       article_subjects.subject_area_name,
       k.display_name
@@ -587,7 +579,7 @@ export async function getForecastInsights(projectId) {
     logger.warn('Failed to get forecast from Redis, querying database:', err?.message || err);
   }
 
-  const client = await pool.connect();
+  const client = pool; // Use pool directly to avoid locking connection across async operations
 
   try {
     const scope = await getProjectScope(client, projectId);
@@ -629,7 +621,5 @@ export async function getForecastInsights(projectId) {
 
     logger.error(`Error fetching forecast for project ${projectId}:`, error);
     throw error;
-  } finally {
-    client.release();
   }
 }
