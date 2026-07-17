@@ -39,134 +39,115 @@ export async function getTemporalShift(projectId, filters = {}) {
       return defaultResponse;
     }
 
+    const cteParts = [];
     const params = [];
-    const sqlFilters = [];
 
-    // Project scope filters: categories OR keywords
-    const scopeConditions = [];
-    if (scope.subjectCategoryIds.length > 0) {
-      params.push(scope.subjectCategoryIds);
-      const catIndex = params.length;
-      scopeConditions.push(`
-        (
-          EXISTS (
-            SELECT 1 FROM "Topic" primary_topic
-            WHERE primary_topic.topic_id = a.primary_topic
-              AND primary_topic.subject_category_id = ANY($${catIndex}::bigint[])
-          )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" st
-            JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
-            WHERE st.article_id = a.article_id
-              AND sub_topic.subject_category_id = ANY($${catIndex}::bigint[])
-          )
-        )
-      `);
-    }
-
-    if (scope.keywordIds.length > 0) {
-      params.push(scope.keywordIds);
-      const kwIndex = params.length;
-      scopeConditions.push(`
-        EXISTS (
-          SELECT 1 FROM "Keyword_Article" ka
-          WHERE ka.article_id = a.article_id
-            AND ka.keyword_id = ANY($${kwIndex}::bigint[])
-        )
-      `);
-    }
-
-    if (scopeConditions.length > 0) {
-      sqlFilters.push(`(${scopeConditions.join(' OR ')})`);
-    }
-
-    // Client filter: subject_area
-    if (subject_area) {
-      const saRes = await client.query(
-        `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
-        [subject_area.trim()]
-      );
-
-      if (saRes.rows.length === 0) {
-        return defaultResponse;
+    // 1. Project Scope topics / keywords
+    if (scope.subjectCategoryIds.length > 0 || scope.keywordIds.length > 0) {
+      const scopeSelects = [];
+      if (scope.subjectCategoryIds.length > 0) {
+        params.push(scope.subjectCategoryIds);
+        const catIdx = params.length;
+        scopeSelects.push(`
+          SELECT a.article_id
+          FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id
+          FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+        `);
       }
+      if (scope.keywordIds.length > 0) {
+        params.push(scope.keywordIds);
+        const kwIdx = params.length;
+        scopeSelects.push(`
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${kwIdx}::bigint[])
+        `);
+      }
+      cteParts.push(`project_scope AS (${scopeSelects.join(' UNION ')})`);
+    }
+
+    // 2. Client filter: subject_area
+    if (subject_area) {
+      const saRes = await client.query(`SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`, [subject_area.trim()]);
+      if (saRes.rows.length === 0) return defaultResponse;
 
       const saId = saRes.rows[0].subject_area_id;
-
-      const scRes = await client.query(
-        `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
-        [saId]
-      );
+      const scRes = await client.query(`SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`, [saId]);
       const filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
-
-      if (filterCategoryIds.length === 0) {
-        return defaultResponse;
-      }
+      if (filterCategoryIds.length === 0) return defaultResponse;
 
       params.push(filterCategoryIds);
-      const filterCatIndex = params.length;
-      sqlFilters.push(`
-        (
-          EXISTS (
-            SELECT 1 FROM "Topic" ft
-            WHERE ft.topic_id = a.primary_topic
-              AND ft.subject_category_id = ANY($${filterCatIndex}::bigint[])
-          )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" fst
-            JOIN "Topic" fst_topic ON fst.topic_id = fst_topic.topic_id
-            WHERE fst.article_id = a.article_id
-              AND fst_topic.subject_category_id = ANY($${filterCatIndex}::bigint[])
-          )
-        )
-      `);
+      const filterCatIdx = params.length;
+      cteParts.push(`sa_filter AS (
+        SELECT a.article_id FROM "Article" a
+        JOIN "Topic" t ON a.primary_topic = t.topic_id
+        WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+        UNION
+        SELECT st.article_id FROM "Sub_Topic" st
+        JOIN "Topic" t ON st.topic_id = t.topic_id
+        WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[])
+      )`);
     }
 
-    // Client filter: keywords
+    // 3. Client filter: keywords
     if (keywordList.length > 0) {
-      const kwRes = await client.query(
-        `SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`,
-        [keywordList.map(s => s.toLowerCase())]
-      );
+      const kwRes = await client.query(`SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`, [keywordList.map(s => s.toLowerCase())]);
       const filterKeywordIds = kwRes.rows.map(r => Number(r.keyword_id));
-
-      if (filterKeywordIds.length === 0) {
-        return defaultResponse;
-      }
+      if (filterKeywordIds.length === 0) return defaultResponse;
 
       params.push(filterKeywordIds);
-      const filterKwIndex = params.length;
-      sqlFilters.push(`
-        EXISTS (
-          SELECT 1 FROM "Keyword_Article" fka
-          WHERE fka.article_id = a.article_id
-            AND fka.keyword_id = ANY($${filterKwIndex}::bigint[])
-        )
-      `);
+      const filterKwIdx = params.length;
+      cteParts.push(`kw_filter AS (
+        SELECT article_id FROM "Keyword_Article" WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+      )`);
     }
 
-    const baseFilters = [...sqlFilters];
-    const baseParams = [...params];
+    // 4. Combine into filtered_articles
+    const joinClauses = [];
+    if (scope.subjectCategoryIds.length > 0 || scope.keywordIds.length > 0) {
+      joinClauses.push('JOIN project_scope ps ON a.article_id = ps.article_id');
+    }
+    if (subject_area) {
+      joinClauses.push('JOIN sa_filter saf ON a.article_id = saf.article_id');
+    }
+    if (keywordList.length > 0) {
+      joinClauses.push('JOIN kw_filter kwf ON a.article_id = kwf.article_id');
+    }
+
+    const yearFilters = [];
     if (from_year !== undefined && from_year !== null) {
-      baseParams.push(Number(from_year));
-      baseFilters.push(`a.publication_year >= $${baseParams.length}`);
+      params.push(Number(from_year));
+      yearFilters.push(`a.publication_year >= $${params.length}`);
     }
     if (to_year !== undefined && to_year !== null) {
-      baseParams.push(Number(to_year));
-      baseFilters.push(`a.publication_year <= $${baseParams.length}`);
+      params.push(Number(to_year));
+      yearFilters.push(`a.publication_year <= $${params.length}`);
     }
+    const yearWhere = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
 
-    const baseWhereClause = baseFilters.length > 0 ? `AND ${baseFilters.join(' AND ')}` : '';
+    cteParts.push(`filtered_articles AS (
+      SELECT a.article_id, a.publication_year, a.primary_topic
+      FROM "Article" a
+      ${joinClauses.join(' ')}
+      WHERE COALESCE(a.is_deleted, false) = false ${yearWhere}
+    )`);
+
+    const cteSql = `WITH ${cteParts.join(', ')}`;
 
     // Query to find latest year
     const latestYearQuery = `
-      SELECT MAX(a.publication_year)::integer AS latest_year
-      FROM "Article" a
-      WHERE COALESCE(a.is_deleted, false) = false
-        ${baseWhereClause}
+      ${cteSql}
+      SELECT MAX(fa.publication_year)::integer AS latest_year
+      FROM filtered_articles fa
     `;
 
-    const latestYearRes = await client.query(latestYearQuery, baseParams);
+    const latestYearRes = await client.query(latestYearQuery, params);
     let latestYear = latestYearRes.rows[0]?.latest_year;
 
     if (!latestYear) {
@@ -178,39 +159,42 @@ export async function getTemporalShift(projectId, filters = {}) {
     const endYear = latestYear;
 
     // Get the top 7 keywords in this scope by total count
-    const topKeywordsParams = [...baseParams];
     const topKeywordsQuery = `
-      SELECT k.keyword_id, k.display_name, COUNT(a.article_id)::integer AS total_count
+      ${cteSql}
+      SELECT k.keyword_id, k.display_name, COUNT(fa.article_id)::integer AS total_count
       FROM "Keyword" k
       JOIN "Keyword_Article" ka ON k.keyword_id = ka.keyword_id
-      JOIN "Article" a ON ka.article_id = a.article_id
-      WHERE COALESCE(a.is_deleted, false) = false
-        AND a.publication_year BETWEEN ${startYear} AND ${endYear}
-        ${baseWhereClause}
+      JOIN filtered_articles fa ON ka.article_id = fa.article_id
+      WHERE fa.publication_year BETWEEN ${startYear} AND ${endYear}
       GROUP BY k.keyword_id, k.display_name
       ORDER BY total_count DESC
       LIMIT 7
     `;
-    const topKeywordsRes = await client.query(topKeywordsQuery, topKeywordsParams);
+    const topKeywordsRes = await client.query(topKeywordsQuery, params);
     const topKeywords = topKeywordsRes.rows;
 
     // Now query volume per year for these top 7 keywords
     const heatmap = [];
     if (topKeywords.length > 0) {
       const keywordIds = topKeywords.map(kw => Number(kw.keyword_id));
+      const volumeParams = [...params, keywordIds, startYear, endYear];
+      const keywordIdsIdx = params.length + 1;
+      const startYearIdx = params.length + 2;
+      const endYearIdx = params.length + 3;
+
       const volumeQuery = `
+        ${cteSql}
         SELECT 
           ka.keyword_id,
-          a.publication_year,
-          COUNT(a.article_id)::integer AS volume
+          fa.publication_year,
+          COUNT(fa.article_id)::integer AS volume
         FROM "Keyword_Article" ka
-        JOIN "Article" a ON ka.article_id = a.article_id
-        WHERE COALESCE(a.is_deleted, false) = false
-          AND ka.keyword_id = ANY($1::bigint[])
-          AND a.publication_year BETWEEN $2 AND $3
-        GROUP BY ka.keyword_id, a.publication_year
+        JOIN filtered_articles fa ON ka.article_id = fa.article_id
+        WHERE ka.keyword_id = ANY($${keywordIdsIdx}::bigint[])
+          AND fa.publication_year BETWEEN $${startYearIdx} AND $${endYearIdx}
+        GROUP BY ka.keyword_id, fa.publication_year
       `;
-      const volumeRes = await client.query(volumeQuery, [keywordIds, startYear, endYear]);
+      const volumeRes = await client.query(volumeQuery, volumeParams);
       
       // Map volumes to a nested lookup
       const volumeMap = new Map();
@@ -259,17 +243,16 @@ export async function getTemporalShift(projectId, filters = {}) {
 
     // Fetch top category names for description
     const topCatQuery = `
-      SELECT sc.display_name, COUNT(a.article_id) as count
-      FROM "Article" a
-      JOIN "Topic" t ON a.primary_topic = t.topic_id
+      ${cteSql}
+      SELECT sc.display_name, COUNT(fa.article_id) as count
+      FROM filtered_articles fa
+      JOIN "Topic" t ON fa.primary_topic = t.topic_id
       JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-      WHERE COALESCE(a.is_deleted, false) = false
-        ${baseWhereClause}
       GROUP BY sc.subject_category_id, sc.display_name
       ORDER BY count DESC
       LIMIT 2
     `;
-    const topCatRes = await client.query(topCatQuery, baseParams);
+    const topCatRes = await client.query(topCatQuery, params);
     const cat1 = topCatRes.rows[0]?.display_name || 'Green Hydrogen';
     const cat2 = topCatRes.rows[1]?.display_name || 'Carbon Capture';
 

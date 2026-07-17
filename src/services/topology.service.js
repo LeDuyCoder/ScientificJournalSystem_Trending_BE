@@ -1,5 +1,4 @@
 import pool from '../config/database.js';
-import { neo4jDriver } from '../config/neo4j.js';
 import { redisGet, redisSet } from './redis.service.js';
 import logger from '../utils/logger.js';
 
@@ -116,36 +115,86 @@ export async function getNetworkTopology(options = {}) {
       }
     }
 
-  } finally {
-    client.release();
-  }
+    // Now, build CTE and execute queries in PostgreSQL
+    const cteParts = [];
+    const params = [];
 
-  const session = neo4jDriver.session();
-  try {
-    const fromYearInt = from_year ? Number(from_year) : null;
-    const toYearInt = to_year ? Number(to_year) : null;
+    // 1. Project Scope topics / keywords
+    const scopeSelects = [];
+    if (projectTopicIds.length > 0) {
+      params.push(projectTopicIds);
+      const catIdx = params.length;
+      scopeSelects.push(`
+        SELECT a.article_id
+        FROM "Article" a
+        WHERE a.primary_topic = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+        UNION
+        SELECT st.article_id
+        FROM "Sub_Topic" st
+        WHERE st.topic_id = ANY($${catIdx}::bigint[])
+      `);
+    }
+    if (projectKwIds.length > 0) {
+      params.push(projectKwIds);
+      const kwIdx = params.length;
+      scopeSelects.push(`
+        SELECT article_id
+        FROM "Keyword_Article"
+        WHERE keyword_id = ANY($${kwIdx}::bigint[])
+      `);
+    }
+    cteParts.push(`project_scope AS (${scopeSelects.join(' UNION ')})`);
 
-    const baseMatch = `
-      MATCH (a:Article)
-      WHERE ($fromYear IS NULL OR a.publication_year >= $fromYear)
-        AND ($toYear IS NULL OR a.publication_year <= $toYear)
-        AND (
-          (size($pTopicIds) > 0 AND EXISTS { MATCH (a)-[:HAS_TOPIC]->(t:Topic) WHERE toInteger(t.id) IN $pTopicIds })
-          OR 
-          (size($pKwIds) > 0 AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE toInteger(k.id) IN $pKwIds })
-        )
-        AND (size($fTopicIds) = 0 OR EXISTS { MATCH (a)-[:HAS_TOPIC]->(t2:Topic) WHERE toInteger(t2.id) IN $fTopicIds })
-        AND (size($fKwIds) = 0 OR EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k2:Keyword) WHERE toInteger(k2.id) IN $fKwIds })
-    `;
+    // 2. Client filter: subject_area
+    if (filterTopicIds.length > 0) {
+      params.push(filterTopicIds);
+      const filterCatIdx = params.length;
+      cteParts.push(`sa_filter AS (
+        SELECT a.article_id FROM "Article" a
+        WHERE a.primary_topic = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+        UNION
+        SELECT st.article_id FROM "Sub_Topic" st
+        WHERE st.topic_id = ANY($${filterCatIdx}::bigint[])
+      )`);
+    }
 
-    const params = {
-      fromYear: fromYearInt,
-      toYear: toYearInt,
-      pTopicIds: projectTopicIds,
-      pKwIds: projectKwIds,
-      fTopicIds: filterTopicIds,
-      fKwIds: filterKeywordIds
-    };
+    // 3. Client filter: keywords
+    if (filterKeywordIds.length > 0) {
+      params.push(filterKeywordIds);
+      const filterKwIdx = params.length;
+      cteParts.push(`kw_filter AS (
+        SELECT article_id FROM "Keyword_Article" WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+      )`);
+    }
+
+    // 4. Combine into filtered_articles
+    const joinClauses = ['JOIN project_scope ps ON a.article_id = ps.article_id'];
+    if (filterTopicIds.length > 0) {
+      joinClauses.push('JOIN sa_filter saf ON a.article_id = saf.article_id');
+    }
+    if (filterKeywordIds.length > 0) {
+      joinClauses.push('JOIN kw_filter kwf ON a.article_id = kwf.article_id');
+    }
+
+    const yearFilters = [];
+    if (from_year) {
+      params.push(Number(from_year));
+      yearFilters.push(`a.publication_year >= $${params.length}`);
+    }
+    if (to_year) {
+      params.push(Number(to_year));
+      yearFilters.push(`a.publication_year <= $${params.length}`);
+    }
+    const yearWhere = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
+    cteParts.push(`filtered_articles AS (
+      SELECT a.article_id
+      FROM "Article" a
+      ${joinClauses.join(' ')}
+      WHERE COALESCE(a.is_deleted, false) = false ${yearWhere}
+    )`);
+
+    const cteSql = `WITH ${cteParts.join(', ')}`;
 
     let allNodes = [];
     let allEdges = [];
@@ -155,70 +204,82 @@ export async function getNetworkTopology(options = {}) {
 
     if (fetchConceptual) {
       const conceptNodesQuery = `
-        ${baseMatch}
-        MATCH (a)-[:HAS_KEYWORD]->(k:Keyword)
-        RETURN k.id AS id, k.name AS label, 'KEYWORD' AS type, count(a) AS size
+        ${cteSql}
+        SELECT k.keyword_id AS id, k.display_name AS label, 'KEYWORD' AS type, COUNT(fa.article_id)::integer AS size
+        FROM "Keyword" k
+        JOIN "Keyword_Article" ka ON k.keyword_id = ka.keyword_id
+        JOIN filtered_articles fa ON ka.article_id = fa.article_id
+        GROUP BY k.keyword_id, k.display_name
       `;
       const conceptEdgesQuery = `
-        ${baseMatch}
-        MATCH (k1:Keyword)<-[:HAS_KEYWORD]-(a)-[:HAS_KEYWORD]->(k2:Keyword)
-        WHERE id(k1) < id(k2)
-        RETURN k1.id AS from, k2.id AS to, 'CONCEPTUAL_PROXIMITY' AS type, count(a) AS weight
+        ${cteSql}
+        SELECT ka1.keyword_id AS from, ka2.keyword_id AS to, 'CONCEPTUAL_PROXIMITY' AS type, COUNT(fa.article_id)::integer AS weight
+        FROM filtered_articles fa
+        JOIN "Keyword_Article" ka1 ON fa.article_id = ka1.article_id
+        JOIN "Keyword_Article" ka2 ON fa.article_id = ka2.article_id
+        WHERE ka1.keyword_id < ka2.keyword_id
+        GROUP BY ka1.keyword_id, ka2.keyword_id
       `;
 
-      const nRes = await session.run(conceptNodesQuery, params);
-      const eRes = await session.run(conceptEdgesQuery, params);
+      const nRes = await client.query(conceptNodesQuery, params);
+      const eRes = await client.query(conceptEdgesQuery, params);
 
-      nRes.records.forEach(r => {
+      nRes.rows.forEach(r => {
         allNodes.push({
-          id: `kw_${r.get('id')}`,
-          label: r.get('label') || 'Unknown',
-          type: r.get('type'),
-          size: r.get('size').toNumber ? r.get('size').toNumber() : Number(r.get('size'))
+          id: `kw_${r.id}`,
+          label: r.label || 'Unknown',
+          type: r.type,
+          size: Number(r.size)
         });
       });
 
-      eRes.records.forEach(r => {
+      eRes.rows.forEach(r => {
         allEdges.push({
-          from: `kw_${r.get('from')}`,
-          to: `kw_${r.get('to')}`,
-          type: r.get('type'),
-          weight: r.get('weight').toNumber ? r.get('weight').toNumber() : Number(r.get('weight'))
+          from: `kw_${r.from}`,
+          to: `kw_${r.to}`,
+          type: r.type,
+          weight: Number(r.weight)
         });
       });
     }
 
     if (fetchCollaboration) {
       const collabNodesQuery = `
-        ${baseMatch}
-        MATCH (auth:Author)-[:WRITES]->(a)
-        RETURN auth.id AS id, auth.name AS label, 'AUTHOR' AS type, count(a) AS size
+        ${cteSql}
+        SELECT auth.author_id AS id, auth.display_name AS label, 'AUTHOR' AS type, COUNT(fa.article_id)::integer AS size
+        FROM "Author" auth
+        JOIN "Author_Article" aa ON auth.author_id = aa.author_id
+        JOIN filtered_articles fa ON aa.article_id = fa.article_id
+        GROUP BY auth.author_id, auth.display_name
       `;
       const collabEdgesQuery = `
-        ${baseMatch}
-        MATCH (auth1:Author)-[:WRITES]->(a)<-[:WRITES]-(auth2:Author)
-        WHERE id(auth1) < id(auth2)
-        RETURN auth1.id AS from, auth2.id AS to, 'CO_AUTHORSHIP' AS type, count(a) AS weight
+        ${cteSql}
+        SELECT aa1.author_id AS from, aa2.author_id AS to, 'CO_AUTHORSHIP' AS type, COUNT(fa.article_id)::integer AS weight
+        FROM filtered_articles fa
+        JOIN "Author_Article" aa1 ON fa.article_id = aa1.article_id
+        JOIN "Author_Article" aa2 ON fa.article_id = aa2.article_id
+        WHERE aa1.author_id < aa2.author_id
+        GROUP BY aa1.author_id, aa2.author_id
       `;
 
-      const nRes = await session.run(collabNodesQuery, params);
-      const eRes = await session.run(collabEdgesQuery, params);
+      const nRes = await client.query(collabNodesQuery, params);
+      const eRes = await client.query(collabEdgesQuery, params);
 
-      nRes.records.forEach(r => {
+      nRes.rows.forEach(r => {
         allNodes.push({
-          id: `auth_${r.get('id')}`,
-          label: r.get('label') || 'Unknown',
-          type: r.get('type'),
-          size: r.get('size').toNumber ? r.get('size').toNumber() : Number(r.get('size'))
+          id: `auth_${r.id}`,
+          label: r.label || 'Unknown',
+          type: r.type,
+          size: Number(r.size)
         });
       });
 
-      eRes.records.forEach(r => {
+      eRes.rows.forEach(r => {
         allEdges.push({
-          from: `auth_${r.get('from')}`,
-          to: `auth_${r.get('to')}`,
-          type: r.get('type'),
-          weight: r.get('weight').toNumber ? r.get('weight').toNumber() : Number(r.get('weight'))
+          from: `auth_${r.from}`,
+          to: `auth_${r.to}`,
+          type: r.type,
+          weight: Number(r.weight)
         });
       });
     }
@@ -297,6 +358,6 @@ export async function getNetworkTopology(options = {}) {
     return result;
 
   } finally {
-    await session.close();
+    client.release();
   }
 }
