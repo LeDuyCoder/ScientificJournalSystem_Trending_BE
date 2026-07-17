@@ -15,9 +15,9 @@ const router = Router();
  */
 router.use('/articles', articlesRoutes);
 router.use('/analytics', requireProjectAccess, analyticsRoutes);
-router.use('/dashboard', requireAuth, requireProjectAccess, dashboardRoutes);
-router.use('/search', requireAuth, searchRoutes);
+router.use('/dashboard', requireProjectAccess, dashboardRoutes);
+router.use('/search', searchRoutes);
 
-router.use('/api/v1', requireAuth, chatRoutes);
+router.use('/api/v1', chatRoutes);
 
 export default router;
