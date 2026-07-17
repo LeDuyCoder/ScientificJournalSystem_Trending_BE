@@ -2,8 +2,12 @@ import pool from '../config/database.js';
 import logger from '../utils/logger.js';
 
 /**
- * Middleware to ensure the authenticated user owns the project
- * they are trying to access.
+ * Middleware to ensure the authenticated user has access to the project
+ * they are trying to reach.
+ *
+ * Access is granted when the user satisfies ANY of the following:
+ *   1. They are the **owner** of the project  (Project.user_id).
+ *   2. They are an **accepted member**         (Project_Member.status = 'ACCEPTED').
  */
 export const requireProjectAccess = async (req, res, next) => {
   try {
@@ -21,8 +25,15 @@ export const requireProjectAccess = async (req, res, next) => {
       });
     }
 
-    // Check if the project belongs to the user
-    const query = `SELECT 1 FROM "Project" WHERE project_id = $1 AND user_id = $2 LIMIT 1`;
+    // Check if the user is the project owner OR an accepted project member
+    const query = `
+      SELECT 1 FROM "Project"
+        WHERE project_id = $1 AND user_id = $2
+      UNION ALL
+      SELECT 1 FROM "Project_Member"
+        WHERE project_id = $1 AND user_id = $2 AND status = 'ACCEPTED'
+      LIMIT 1
+    `;
     const result = await pool.query(query, [projectId, userId]);
 
     if (result.rowCount === 0) {
