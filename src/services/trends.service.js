@@ -73,7 +73,7 @@ export async function getPublicationTrends(options = {}) {
     logger.warn('Failed to get trend data from Redis cache:', err?.message || err);
   }
 
-  const client = await pool.connect();
+  const client = pool; // Use pool directly to avoid locking connection across async operations
 
   try {
     const params = [];
@@ -129,16 +129,14 @@ export async function getPublicationTrends(options = {}) {
         const catIndex = params.length;
         scopeConditions.push(`
           (
-            EXISTS (
-              SELECT 1 FROM "Topic" primary_topic
-              WHERE primary_topic.topic_id = a.primary_topic
-                AND primary_topic.subject_category_id = ANY($${catIndex}::bigint[])
+            a.primary_topic IN (
+              SELECT topic_id FROM "Topic"
+              WHERE subject_category_id = ANY($${catIndex}::bigint[])
             )
-            OR EXISTS (
-              SELECT 1 FROM "Sub_Topic" st
-              JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
-              WHERE st.article_id = a.article_id
-                AND sub_topic.subject_category_id = ANY($${catIndex}::bigint[])
+            OR a.article_id IN (
+              SELECT st.article_id FROM "Sub_Topic" st
+              JOIN "Topic" t ON st.topic_id = t.topic_id
+              WHERE t.subject_category_id = ANY($${catIndex}::bigint[])
             )
           )
         `);
@@ -148,10 +146,9 @@ export async function getPublicationTrends(options = {}) {
         params.push(projectKeywordIds);
         const kwIndex = params.length;
         scopeConditions.push(`
-          EXISTS (
-            SELECT 1 FROM "Keyword_Article" ka
-            WHERE ka.article_id = a.article_id
-              AND ka.keyword_id = ANY($${kwIndex}::bigint[])
+          a.article_id IN (
+            SELECT ka.article_id FROM "Keyword_Article" ka
+            WHERE ka.keyword_id = ANY($${kwIndex}::bigint[])
           )
         `);
       }
@@ -181,16 +178,14 @@ export async function getPublicationTrends(options = {}) {
       const filterCatIndex = params.length;
       sqlFilters.push(`
         (
-          EXISTS (
-            SELECT 1 FROM "Topic" ft
-            WHERE ft.topic_id = a.primary_topic
-              AND ft.subject_category_id = ANY($${filterCatIndex}::bigint[])
+          a.primary_topic IN (
+            SELECT topic_id FROM "Topic"
+            WHERE subject_category_id = ANY($${filterCatIndex}::bigint[])
           )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" fst
-            JOIN "Topic" fst_topic ON fst.topic_id = fst_topic.topic_id
-            WHERE fst.article_id = a.article_id
-              AND fst_topic.subject_category_id = ANY($${filterCatIndex}::bigint[])
+          OR a.article_id IN (
+            SELECT st.article_id FROM "Sub_Topic" st
+            JOIN "Topic" t ON st.topic_id = t.topic_id
+            WHERE t.subject_category_id = ANY($${filterCatIndex}::bigint[])
           )
         )
       `);
@@ -223,16 +218,14 @@ export async function getPublicationTrends(options = {}) {
       const filterCatIndex = params.length;
       sqlFilters.push(`
         (
-          EXISTS (
-            SELECT 1 FROM "Topic" ft
-            WHERE ft.topic_id = a.primary_topic
-              AND ft.subject_category_id = ANY($${filterCatIndex}::bigint[])
+          a.primary_topic IN (
+            SELECT topic_id FROM "Topic"
+            WHERE subject_category_id = ANY($${filterCatIndex}::bigint[])
           )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" fst
-            JOIN "Topic" fst_topic ON fst.topic_id = fst_topic.topic_id
-            WHERE fst.article_id = a.article_id
-              AND fst_topic.subject_category_id = ANY($${filterCatIndex}::bigint[])
+          OR a.article_id IN (
+            SELECT st.article_id FROM "Sub_Topic" st
+            JOIN "Topic" t ON st.topic_id = t.topic_id
+            WHERE t.subject_category_id = ANY($${filterCatIndex}::bigint[])
           )
         )
       `);
@@ -253,10 +246,9 @@ export async function getPublicationTrends(options = {}) {
       params.push(filterKeywordIds);
       const filterKwIndex = params.length;
       sqlFilters.push(`
-        EXISTS (
-          SELECT 1 FROM "Keyword_Article" fka
-          WHERE fka.article_id = a.article_id
-            AND fka.keyword_id = ANY($${filterKwIndex}::bigint[])
+        a.article_id IN (
+          SELECT ka.article_id FROM "Keyword_Article" ka
+          WHERE ka.keyword_id = ANY($${filterKwIndex}::bigint[])
         )
       `);
     }
@@ -303,7 +295,7 @@ export async function getPublicationTrends(options = {}) {
     }
 
     return finalResult;
-  } finally {
-    client.release();
+  } catch (error) {
+    throw error;
   }
 }

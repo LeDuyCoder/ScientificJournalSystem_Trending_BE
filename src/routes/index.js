@@ -14,7 +14,7 @@ const router = Router();
  * Mount all feature routes.
  */
 router.use('/articles', articlesRoutes);
-router.use('/analytics', requireProjectAccess, analyticsRoutes);
+router.use('/analytics', analyticsRoutes);
 router.use('/dashboard', requireProjectAccess, dashboardRoutes);
 router.use('/search', searchRoutes);
 

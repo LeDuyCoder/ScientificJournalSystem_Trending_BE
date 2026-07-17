@@ -21,7 +21,7 @@ import { getJournalMigrationAnalysis } from '../services/migration.service.js';
 import { getNetworkTopology } from '../services/topology.service.js';
 import { getKeywordVectors } from '../services/keywordVectors.service.js';
 import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
-import { getDevelopmentTrends } from '../services/developmentTrends.service.js';
+import { getDevelopmentTrends } from '../services/analytics/development.service.js';
 import { getImpactMatrixData } from '../services/impactMatrix.service.js';
 import { getCrossLinks } from '../services/crossLinks.service.js';
 import { getTemporalShift } from '../services/temporalShift.service.js';

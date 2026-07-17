@@ -293,14 +293,19 @@ export async function getDevelopmentTrends(query = {}) {
         mirroringMap[y] = { year: y, external: 0, self: 0 };
       }
 
-      const neo4jSession = neo4jDriver.session({ defaultAccessMode: 'READ' });
+      let neo4jSession = null;
       try {
+        if (!neo4jDriver || !neo4jDriver.session) throw new Error('Neo4j driver is not configured');
+        neo4jSession = neo4jDriver.session({ defaultAccessMode: 'READ' });
+        
         let cypher = `
-          MATCH (a:Article)-[r:REFERENCES]->(b:Article)
-          WHERE coalesce(a.is_deleted, false) = false AND coalesce(b.is_deleted, false) = false
+          MATCH (a:Article)
+          WHERE coalesce(a.is_deleted, false) = false
             AND a.publication_year IS NOT NULL
             AND toInteger(a.publication_year) >= $fromYear
             AND toInteger(a.publication_year) <= $toYear
+          MATCH (a)-[r:REFERENCES]->(b:Article)
+          WHERE coalesce(b.is_deleted, false) = false
         `;
 
         const cypherParams = {
@@ -338,7 +343,7 @@ export async function getDevelopmentTrends(query = {}) {
       } catch (err) {
         console.error('Error fetching citation mirroring data from Neo4j:', err);
       } finally {
-        await neo4jSession.close();
+        if (neo4jSession) await neo4jSession.close();
       }
 
       return {
@@ -355,86 +360,91 @@ export async function getDevelopmentTrends(query = {}) {
 
       let topicEvolutionData = [];
       try {
-        let topTopicsRes;
+        let cteCondition = '';
+        let cteParams = [];
         const hasProject = !!(project_id && project_id !== 'undefined' && project_id !== 'null');
+        
         if (hasProject && projectCategoryIds && projectCategoryIds.length > 0) {
-          topTopicsRes = await pool.query(
-            `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
-             FROM "Topic" t
-             JOIN "Article" a ON a.primary_topic = t.topic_id
-             WHERE t.subject_category_id = ANY($1::bigint[]) AND coalesce(a.is_deleted, false) = false
-             GROUP BY t.topic_id, t.display_name
-             ORDER BY cnt DESC
-             LIMIT 3`,
-            [projectCategoryIds]
-          );
+          cteCondition = `t.subject_category_id = ANY($1::bigint[]) AND coalesce(a.is_deleted, false) = false`;
+          cteParams = [projectCategoryIds, from_year, to_year];
         } else if (mappedDomain && mappedDomain !== 'all') {
-          topTopicsRes = await pool.query(
-            `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
-             FROM "Topic" t
-             JOIN "Article" a ON a.primary_topic = t.topic_id
-             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-             WHERE LOWER(sa.display_name) = LOWER($1) AND coalesce(a.is_deleted, false) = false
-             GROUP BY t.topic_id, t.display_name
-             ORDER BY cnt DESC
-             LIMIT 3`,
-            [mappedDomain]
-          );
+          cteCondition = `LOWER(sa.display_name) = LOWER($1) AND coalesce(a.is_deleted, false) = false`;
+          cteParams = [mappedDomain, from_year, to_year];
         } else {
-          topTopicsRes = await pool.query(
-            `SELECT DISTINCT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
-             FROM "Topic" t
-             JOIN "Article" a ON a.primary_topic = t.topic_id
-             WHERE coalesce(a.is_deleted, false) = false
-             GROUP BY t.topic_id, t.display_name
-             ORDER BY cnt DESC
-             LIMIT 3`
-          );
+          cteCondition = `coalesce(a.is_deleted, false) = false`;
+          cteParams = [from_year, to_year];
         }
 
-        const topicsList = topTopicsRes.rows;
+        let joins = `JOIN "Article" a ON a.primary_topic = t.topic_id`;
+        if (mappedDomain && mappedDomain !== 'all' && !(hasProject && projectCategoryIds && projectCategoryIds.length > 0)) {
+           joins += ` JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+                      JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id`;
+        }
+
+        const sql = `
+          WITH TargetTopics AS (
+             SELECT t.topic_id, t.display_name AS name, count(a.article_id) as cnt
+             FROM "Topic" t
+             ${joins}
+             WHERE ${cteCondition}
+             GROUP BY t.topic_id, t.display_name
+             ORDER BY cnt DESC
+             LIMIT 3
+          )
+          SELECT 
+            tt.name,
+            tt.topic_id,
+            tt.cnt as total_topic_cnt,
+            a.publication_year, 
+            count(a.article_id) as year_cnt
+          FROM TargetTopics tt
+          LEFT JOIN "Article" a ON a.primary_topic = tt.topic_id
+            AND coalesce(a.is_deleted, false) = false
+            AND a.publication_year IS NOT NULL
+            AND a.publication_year >= $${cteParams.length - 1}
+            AND a.publication_year <= $${cteParams.length}
+          GROUP BY tt.name, tt.topic_id, tt.cnt, a.publication_year
+        `;
+        
+        const countsRes = await pool.query(sql, cteParams);
+        
+        const topicsMap = {};
+        const DOMAIN_STATUSES = ['Expanding', 'Stable', 'Emerging'];
+        
+        countsRes.rows.forEach(r => {
+          if (!topicsMap[r.topic_id]) {
+            topicsMap[r.topic_id] = {
+              name: r.name,
+              total_cnt: parseInt(r.total_topic_cnt, 10),
+              yearsMap: {}
+            };
+          }
+          if (r.publication_year) {
+            topicsMap[r.topic_id].yearsMap[parseInt(r.publication_year, 10)] = parseInt(r.year_cnt, 10);
+          }
+        });
+
         const totalArticlesRes = await pool.query(
           `SELECT count(article_id) as total FROM "Article" WHERE coalesce(is_deleted, false) = false`
         );
         const totalArticles = parseInt(totalArticlesRes.rows[0]?.total || 1, 10);
 
-        const topicsData = [];
-        const DOMAIN_STATUSES = ['Expanding', 'Stable', 'Emerging'];
-
-        for (let i = 0; i < topicsList.length; i++) {
-          const topic = topicsList[i];
-          const percent = totalArticles > 0 ? Math.round((parseInt(topic.cnt, 10) / totalArticles) * 100) : 0;
-
-          // Count articles per year for this topic
-          const countsRes = await pool.query(
-            `SELECT publication_year, count(article_id) as val
-             FROM "Article"
-             WHERE primary_topic = $1 AND coalesce(is_deleted, false) = false
-               AND publication_year IS NOT NULL
-               AND publication_year >= $2
-               AND publication_year <= $3
-             GROUP BY publication_year`,
-            [topic.topic_id, from_year, to_year]
-          );
-
-          const countsMap = {};
-          countsRes.rows.forEach(r => {
-            countsMap[parseInt(r.publication_year, 10)] = parseInt(r.val, 10);
-          });
-
+        const topicsData = Object.values(topicsMap).map((topic, i) => {
+          const percent = totalArticles > 0 ? Math.round((topic.total_cnt / totalArticles) * 100) : 0;
           const topicYearData = yearsRange.map(year => ({
             year,
-            value: countsMap[year] || 0
+            value: topic.yearsMap[year] || 0
           }));
-
-          topicsData.push({
+          return {
             name: topic.name,
             domain: DOMAIN_STATUSES[i % DOMAIN_STATUSES.length],
             percentage: percent,
             data: topicYearData
-          });
-        }
+          };
+        });
+
+        // Ensure we sort by percentage descending to match original behaviour
+        topicsData.sort((a, b) => b.percentage - a.percentage);
 
         topicEvolutionData = topicsData;
       } catch (err) {
