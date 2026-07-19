@@ -5,7 +5,7 @@ import { redisGet, redisSet } from './redis.service.js';
 
 // Cache settings
 const CACHE_KEY_PREFIX = 'analytics:top-entities';
-const CACHE_TTL = 3600; // Cache for 1 hour
+const CACHE_TTL = 43200; // 12 hours // Cache for 1 hour
 
 /**
  * Tính điểm thô cho một tổ chức dựa trên các chỉ số.

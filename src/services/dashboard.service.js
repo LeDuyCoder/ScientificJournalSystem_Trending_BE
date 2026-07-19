@@ -4,7 +4,7 @@ import pool from '../config/database.js';
 import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY = 'dashboard:stats';
-const CACHE_TTL = 300; // 5 phút
+const CACHE_TTL = 43200; // 12 hours // 5 phút
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CÁC HÀM TRỢ GIÚP (HELPERS)
@@ -189,193 +189,149 @@ export async function getDashboardStats(filters = {}) {
     const { projectId } = filters;
     const { currentYear, previousYear } = getPeriodBounds();
 
-    // ── 1. Tạo cache key động dựa trên bộ lọc ──
+    // ── 1. Cấu hình Cache ──
     const filterParts = [];
-    if (projectId) {
-        filterParts.push(`project:${projectId}`);
-    }
+    if (projectId) filterParts.push(`project:${projectId}`);
 
-    const dynamicCacheKey =
-        filterParts.length > 0
-            ? `${CACHE_KEY}:filters:${filterParts.join('|')}`
-            : CACHE_KEY;
+    const dynamicCacheKey = filterParts.length > 0
+        ? `${CACHE_KEY}:filters:${filterParts.join('|')}`
+        : CACHE_KEY;
 
-    // --- Bắt đầu logic Cache ---
     try {
         const cached = await redisGet(dynamicCacheKey);
-        if (cached) {
-            console.log(`[Redis] Dashboard stats cache HIT for key: ${dynamicCacheKey}`);
-            return JSON.parse(cached); // Cache HIT
-        }
-        console.log(`[Redis] Dashboard stats cache MISS for key: ${dynamicCacheKey}`);
+        if (cached) return JSON.parse(cached);
     } catch (redisErr) {
-        console.warn('[Dashboard] Redis không khả dụng, bỏ quan việc đọc dữ liệu từ cache:', redisErr.message);
+        console.warn('[Dashboard] Redis không khả dụng khi đọc cache:', redisErr.message);
     }
-    // --- Kết thúc logic đọc Cache ---
 
     try {
         let scopeFilter = 'TRUE';
         const params = [currentYear, previousYear];
 
         if (projectId) {
-            // Sử dụng pool thay vì pgClient để tránh lỗi chạy song song trên cùng 1 connection
             const scope = await getProjectScope(pool, projectId);
             const sqlFilters = [];
 
-            if (scope.subjectCategoryIds && scope.subjectCategoryIds.length > 0) {
+            if (scope.subjectCategoryIds?.length > 0) {
                 params.push(scope.subjectCategoryIds);
                 sqlFilters.push(buildSubjectScopeSql(params.length));
             }
-            if (scope.keywordIds && scope.keywordIds.length > 0) {
+            if (scope.keywordIds?.length > 0) {
                 params.push(scope.keywordIds);
                 sqlFilters.push(buildKeywordScopeSql(params.length));
             }
 
-            if (sqlFilters.length > 0) {
-                scopeFilter = `(${sqlFilters.join(' OR ')})`;
-            } else {
-                scopeFilter = 'FALSE'; // Project has no criteria
-            }
+            scopeFilter = sqlFilters.length > 0 ? `(${sqlFilters.join(' OR ')})` : 'FALSE';
         }
 
-        // ── 2. Các câu truy vấn PostgreSQL ──
-        const ARTICLES_QUERY = `
+        // ── 2. TRUY VẤN PHẲNG (DÙNG PROMISE.ALL) VÀ CHỈ DÙNG KHÓA NGOẠI CÓ SẴN ──
+
+        // Q1: Đếm Articles & Citations
+        const ARTICLES_CITATIONS_QUERY = `
             SELECT
-                COUNT(DISTINCT a.article_id) AS total_val,
-                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN a.article_id END) AS current_val,
-                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN a.article_id END) AS previous_val
+                COUNT(article_id) AS art_total,
+                COUNT(CASE WHEN publication_year = $1 THEN article_id END) AS art_current,
+                COUNT(CASE WHEN publication_year = $2 THEN article_id END) AS art_previous,
+                COALESCE(SUM(citation_count), 0) AS cit_total,
+                COALESCE(SUM(CASE WHEN publication_year = $1 THEN citation_count ELSE 0 END), 0) AS cit_current,
+                COALESCE(SUM(CASE WHEN publication_year = $2 THEN citation_count ELSE 0 END), 0) AS cit_previous
             FROM "Article" a
             WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
         `;
 
-        const CITATIONS_QUERY = `
-            SELECT
-                COALESCE(SUM(a.citation_count), 0) AS total_val,
-                COALESCE(SUM(CASE WHEN a.publication_year = $1 THEN a.citation_count ELSE 0 END), 0) AS current_val,
-                COALESCE(SUM(CASE WHEN a.publication_year = $2 THEN a.citation_count ELSE 0 END), 0) AS previous_val
-            FROM "Article" a
-            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
-        `;
-
+        // Q2: Đếm Journal bằng cách quét gọn qua Khóa ngoại (Article -> Issue -> Volume)
+        // Loại bỏ JOIN với bảng Journal nếu không thực sự cần check j.is_deleted để tiết kiệm I/O
         const JOURNALS_QUERY = `
             SELECT
-                COUNT(DISTINCT j.journal_id) AS total_val,
-                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN j.journal_id END) AS current_val,
-                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN j.journal_id END) AS previous_val
-            FROM "Journal" j
-            JOIN "Volume" v ON j.journal_id = v.journal_id
-            JOIN "Issue" iss ON v.volume_id = iss.volume_id
-            JOIN "Article" a ON iss.issue_id = a.issue_id
-            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false AND COALESCE(j.is_deleted, false) = false
+                COUNT(DISTINCT v.journal_id) AS total_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN v.journal_id END) AS current_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN v.journal_id END) AS previous_val
+            FROM "Article" a
+            JOIN "Issue" iss ON a.issue_id = iss.issue_id
+            JOIN "Volume" v ON iss.volume_id = v.volume_id
+            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
         `;
 
+        // Q3: Đếm Author bằng cách quét thẳng sang bảng trung gian (Article -> Author_Article)
         const AUTHORS_QUERY = `
             SELECT
-                COUNT(DISTINCT au.author_id) AS total_val,
-                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN au.author_id END) AS current_val,
-                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN au.author_id END) AS previous_val
-            FROM "Author" au
-            JOIN "Author_Article" aa ON au.author_id = aa.author_id
-            JOIN "Article" a ON aa.article_id = a.article_id
-            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false AND COALESCE(au.is_deleted, false) = false
+                COUNT(DISTINCT aa.author_id) AS total_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN aa.author_id END) AS current_val,
+                COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN aa.author_id END) AS previous_val
+            FROM "Article" a
+            JOIN "Author_Article" aa ON a.article_id = aa.article_id
+            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
         `;
 
-        // ── 3. Chạy song song cả 4 truy vấn trên các connection riêng rẽ từ pool ──
-        const [articlesRes, citationsRes, journalsRes, authorsRes] = await Promise.all([
-            pool.query(ARTICLES_QUERY, params),
-            pool.query(CITATIONS_QUERY, params),
+        // ── 3. CHẠY SONG SONG BẤT ĐỒNG BỘ BẰNG PROMISE.ALL ──
+        const [artCitRes, journalsRes, authorsRes] = await Promise.all([
+            pool.query(ARTICLES_CITATIONS_QUERY, params),
             pool.query(JOURNALS_QUERY, params),
-            pool.query(AUTHORS_QUERY, params),
+            pool.query(AUTHORS_QUERY, params)
         ]);
 
+        const artCitRow = artCitRes.rows[0];
+        const journalRow = journalsRes.rows[0];
+        const authorRow = authorsRes.rows[0];
+
         const articles = {
-            total: Number(articlesRes.rows[0].total_val) || 0,
-            current: Number(articlesRes.rows[0].current_val) || 0,
-            previous: Number(articlesRes.rows[0].previous_val) || 0
+            total: Number(artCitRow.art_total) || 0,
+            current: Number(artCitRow.art_current) || 0,
+            previous: Number(artCitRow.art_previous) || 0
         };
         const citations = {
-            total: Number(citationsRes.rows[0].total_val) || 0,
-            current: Number(citationsRes.rows[0].current_val) || 0,
-            previous: Number(citationsRes.rows[0].previous_val) || 0
+            total: Number(artCitRow.cit_total) || 0,
+            current: Number(artCitRow.cit_current) || 0,
+            previous: Number(artCitRow.cit_previous) || 0
         };
         const journals = {
-            total: Number(journalsRes.rows[0].total_val) || 0,
-            current: Number(journalsRes.rows[0].current_val) || 0,
-            previous: Number(journalsRes.rows[0].previous_val) || 0
+            total: Number(journalRow.total_val) || 0,
+            current: Number(journalRow.current_val) || 0,
+            previous: Number(journalRow.previous_val) || 0
         };
         const authors = {
-            total: Number(authorsRes.rows[0].total_val) || 0,
-            current: Number(authorsRes.rows[0].current_val) || 0,
-            previous: Number(authorsRes.rows[0].previous_val) || 0
+            total: Number(authorRow.total_val) || 0,
+            current: Number(authorRow.current_val) || 0,
+            previous: Number(authorRow.previous_val) || 0
         };
 
-        // ── 4. Tổng hợp cấu trúc dữ liệu phản hồi theo công thức nghiệp vụ ──
-
-        // Mật độ trích dẫn (densityIndex) = Tổng số trích dẫn / Tổng số bài báo phát hành
+        // ── 4. Xử lý logic nghiệp vụ tính toán Dashboard ──
         const densityValue = articles.total > 0
             ? Math.round((citations.total / articles.total) * 100) / 100
             : 0.00;
 
-        // Tính toán biên độ thay đổi mật độ trích dẫn (delta) để xác định trạng thái (status)
         const densityCurrent = articles.current > 0 ? citations.current / articles.current : 0;
         const densityPrevious = articles.previous > 0 ? citations.previous / articles.previous : 0;
 
-        let densityDelta = 0;
-        if (densityPrevious > 0) {
-            densityDelta = ((densityCurrent - densityPrevious) / densityPrevious) * 100;
-        } else {
-            densityDelta = densityCurrent > 0 ? 100 : 0;
-        }
+        let densityDelta = densityPrevious > 0
+            ? ((densityCurrent - densityPrevious) / densityPrevious) * 100
+            : (densityCurrent > 0 ? 100 : 0);
 
-        let densityStatus = 'stable';
-        if (densityDelta > 0.5) {
-            densityStatus = 'up';
-        } else if (densityDelta < -0.5) {
-            densityStatus = 'down';
-        }
+        let densityStatus = densityDelta > 0.5 ? 'up' : (densityDelta < -0.5 ? 'down' : 'stable');
 
-        // Số lượng dịch chuyển (totalRelocated) = Ước lượng động tỷ lệ với 4.634% tổng số tác giả (Authors)
         const relocatedValue = Math.round(authors.total * 0.04634);
-
-        // Tốc độ tăng trưởng dịch chuyển: Tính tương ứng tỷ lệ thuận với tăng trưởng của Authors
         const authorsGrowth = calcGrowthRate(authors.current, authors.previous);
         const relocatedGrowth = authorsGrowth !== 0 ? Math.round((authorsGrowth - 16.3) * 10) / 10 : -2.1;
 
-        /** @type {DashboardStats} */
         const stats = {
-            totalAuthors: {
-                value: authors.total,
-                growthRate: calcGrowthRate(authors.current, authors.previous),
-            },
-            totalJournals: {
-                value: journals.total,
-                growthRate: calcGrowthRate(journals.current, journals.previous),
-            },
-            densityIndex: {
-                value: densityValue,
-                status: densityStatus,
-            },
-            totalRelocated: {
-                value: relocatedValue,
-                growthRate: relocatedGrowth,
-            },
+            totalAuthors: { value: authors.total, growthRate: authorsGrowth },
+            totalJournals: { value: journals.total, growthRate: calcGrowthRate(journals.current, journals.previous) },
+            densityIndex: { value: densityValue, status: densityStatus },
+            totalRelocated: { value: relocatedValue, growthRate: relocatedGrowth },
         };
 
-        // --- Bắt đầu logic ghi Cache ---
         try {
             await redisSet(dynamicCacheKey, JSON.stringify(stats), CACHE_TTL);
-            console.log(`[Redis] Dashboard stats cached successfully for key: ${dynamicCacheKey}`);
         } catch (redisErr) {
-            console.warn('[Dashboard] Redis không khả dụng, bỏ qua việc ghi cache:', redisErr.message);
+            console.warn('[Dashboard] Redis không khả dụng khi ghi cache:', redisErr.message);
         }
 
         return stats;
     } catch (err) {
-        console.error('[Dashboard] Error in getDashboardStats:', err);
+        console.error('[Dashboard] Lỗi hệ thống:', err);
         throw err;
     }
 }
-
 /**
  * @typedef {Object} StatMetric
  * @property {number} value      - Tổng số lượng tích lũy trọn đời (tất cả các bản ghi).

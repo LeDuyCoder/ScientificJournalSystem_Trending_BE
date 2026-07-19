@@ -10,7 +10,7 @@ const FORECAST_TYPES = {
 
 // Cache settings
 const CACHE_KEY_PREFIX = 'analytics:forecast:project';
-const CACHE_TTL = 3600; // Cache for 1 hour
+const CACHE_TTL = 43200; // 12 hours // Cache for 1 hour
 
 function roundNumber(value, digits = 1) {
   if (!Number.isFinite(value)) return 0;

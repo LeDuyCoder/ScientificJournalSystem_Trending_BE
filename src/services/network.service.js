@@ -1,9 +1,8 @@
 import pool from '../config/database.js';
-import { neo4jDriver } from '../config/neo4j.js';
 import { redisGet, redisSet } from './redis.service.js';
 import logger from '../utils/logger.js';
 
-const CACHE_TTL = 600; // 10 minutes cho Graph Data
+const CACHE_TTL = 43200; // 12 hours // 10 minutes cho Graph Data
 
 function prepareKeywords(keywords) {
   if (!keywords) return [];
@@ -25,7 +24,7 @@ export async function getCollaborationNetwork(options = {}) {
   const keywordList = prepareKeywords(keywords);
   const normalizedKeywords = [...keywordList].map(s => s.toLowerCase()).sort().join(',');
 
-  const cacheKey = `analytics:network:collab:v3:${project_id}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}:${limitNodes}:${minWeight}`;
+  const cacheKey = `analytics:network:collab:v4:${project_id}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}:${limitNodes}:${minWeight}`;
 
   try {
     const cachedData = await redisGet(cacheKey);
@@ -35,11 +34,7 @@ export async function getCollaborationNetwork(options = {}) {
   }
 
   const client = await pool.connect();
-  let filterTopicIds = [];
-  let filterKeywordIds = [];
-  let projectTopicIds = [];
-  let projectKwIds = [];
-
+  
   try {
     // 1. Get Project
     const projectRes = await client.query(
@@ -66,9 +61,9 @@ export async function getCollaborationNetwork(options = {}) {
       `SELECT keyword_id FROM "Project_Keyword" WHERE project_id = $1`,
       [project_id]
     );
-    projectKwIds = projectKwRes.rows.map(r => Number(r.keyword_id));
+    const projectKwIds = projectKwRes.rows.map(r => Number(r.keyword_id));
 
-    // Convert projectCatIds to projectTopicIds
+    let projectTopicIds = [];
     if (projectCatIds.length > 0) {
       const pTopicRes = await client.query(
         `SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($1::bigint[])`,
@@ -82,6 +77,7 @@ export async function getCollaborationNetwork(options = {}) {
     }
 
     // Apply Intersection Custom Filters
+    let filterTopicIds = [];
     if (subject_area) {
       const saRes = await client.query(
         `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
@@ -108,6 +104,7 @@ export async function getCollaborationNetwork(options = {}) {
       }
     }
 
+    let filterKeywordIds = [];
     if (keywordList.length > 0) {
       const kwRes = await client.query(
         `SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`,
@@ -120,79 +117,171 @@ export async function getCollaborationNetwork(options = {}) {
       }
     }
 
-  } finally {
-    client.release();
-  }
+    // 2. Build Article Filter CTE
+    const cteParts = [];
+    const params = [];
 
-  // 2. Query Neo4j
-  const session = neo4jDriver.session();
-  try {
-    const fromYearInt = from_year ? Number(from_year) : null;
-    const toYearInt = to_year ? Number(to_year) : null;
+    // Project Scope topics / keywords
+    if (projectTopicIds.length > 0 || projectKwIds.length > 0) {
+      const scopeSelects = [];
+      if (projectTopicIds.length > 0) {
+        params.push(projectTopicIds);
+        const pTopicIdx = params.length;
+        scopeSelects.push(`
+          SELECT a.article_id
+          FROM "Article" a
+          WHERE a.primary_topic = ANY($${pTopicIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id
+          FROM "Sub_Topic" st
+          WHERE st.topic_id = ANY($${pTopicIdx}::bigint[])
+        `);
+      }
+      if (projectKwIds.length > 0) {
+        params.push(projectKwIds);
+        const pKwIdx = params.length;
+        scopeSelects.push(`
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${pKwIdx}::bigint[])
+        `);
+      }
+      cteParts.push(`project_articles AS (${scopeSelects.join(' UNION ')})`);
+    }
 
-    const baseMatch = `
-      MATCH (a:Article)
-      WHERE ($fromYear IS NULL OR a.publication_year >= $fromYear)
-        AND ($toYear IS NULL OR a.publication_year <= $toYear)
-        AND (
-          (size($pTopicIds) > 0 AND EXISTS { MATCH (a)-[:HAS_TOPIC]->(t:Topic) WHERE toInteger(t.id) IN $pTopicIds })
-          OR 
-          (size($pKwIds) > 0 AND EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k:Keyword) WHERE toInteger(k.id) IN $pKwIds })
-        )
-        AND (size($fTopicIds) = 0 OR EXISTS { MATCH (a)-[:HAS_TOPIC]->(t2:Topic) WHERE toInteger(t2.id) IN $fTopicIds })
-        AND (size($fKwIds) = 0 OR EXISTS { MATCH (a)-[:HAS_KEYWORD]->(k2:Keyword) WHERE toInteger(k2.id) IN $fKwIds })
-    `;
+    // Custom Subject Area Filter
+    if (filterTopicIds.length > 0) {
+      params.push(filterTopicIds);
+      const fTopicIdx = params.length;
+      cteParts.push(`filter_sa_articles AS (
+        SELECT a.article_id
+        FROM "Article" a
+        WHERE a.primary_topic = ANY($${fTopicIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+        UNION
+        SELECT st.article_id
+        FROM "Sub_Topic" st
+        WHERE st.topic_id = ANY($${fTopicIdx}::bigint[])
+      )`);
+    }
 
+    // Custom Keyword Filter
+    if (filterKeywordIds.length > 0) {
+      params.push(filterKeywordIds);
+      const fKwIdx = params.length;
+      cteParts.push(`filter_kw_articles AS (
+        SELECT article_id
+        FROM "Keyword_Article"
+        WHERE keyword_id = ANY($${fKwIdx}::bigint[])
+      )`);
+    }
+
+    // Year range filters
+    const yearFilters = [];
+    if (from_year) {
+      params.push(Number(from_year));
+      yearFilters.push(`a.publication_year >= $${params.length}`);
+    }
+    if (to_year) {
+      params.push(Number(to_year));
+      yearFilters.push(`a.publication_year <= $${params.length}`);
+    }
+    const yearSql = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
+    // Join them all to form `filtered_articles`
+    const joins = [];
+    if (projectTopicIds.length > 0 || projectKwIds.length > 0) {
+      joins.push(`JOIN project_articles pa ON a.article_id = pa.article_id`);
+    }
+    if (filterTopicIds.length > 0) {
+      joins.push(`JOIN filter_sa_articles fsa ON a.article_id = fsa.article_id`);
+    }
+    if (filterKeywordIds.length > 0) {
+      joins.push(`JOIN filter_kw_articles fkw ON a.article_id = fkw.article_id`);
+    }
+
+    cteParts.push(`filtered_articles AS (
+      SELECT a.article_id, a.publication_year
+      FROM "Article" a
+      ${joins.join('\n      ')}
+      WHERE COALESCE(a.is_deleted, false) = false
+        ${yearSql}
+    )`);
+
+    const cteSql = `WITH ${cteParts.join(',\n')}`;
+
+    // Query 1: Author Nodes
     const authorNodesQuery = `
-      ${baseMatch}
-      MATCH (auth:Author)-[:WRITES]->(a)
-      RETURN auth.id AS id, auth.name AS label, 'AUTHOR' AS type, count(a) AS article_count
+      ${cteSql}
+      SELECT 
+        au.author_id AS id, 
+        au.display_name AS label, 
+        'AUTHOR' AS type, 
+        COUNT(DISTINCT a.article_id)::integer AS article_count
+      FROM "Author" au
+      JOIN "Author_Article" aa ON au.author_id = aa.author_id
+      JOIN filtered_articles a ON aa.article_id = a.article_id
+      WHERE COALESCE(au.is_deleted, false) = false
+      GROUP BY au.author_id, au.display_name
     `;
 
+    // Query 2: Institution Nodes
     const instNodesQuery = `
-      ${baseMatch}
-      MATCH (auth:Author)-[:WRITES]->(a)
-      MATCH (auth)-[:AFFILIATED_WITH]->(inst:Institution)
-      RETURN inst.id AS id, inst.name AS label, 'INSTITUTION' AS type, count(DISTINCT auth) AS author_count
+      ${cteSql}
+      SELECT 
+        inst.institution_id AS id, 
+        inst.display_name AS label, 
+        'INSTITUTION' AS type, 
+        COUNT(DISTINCT au.author_id)::integer AS author_count
+      FROM "Institution" inst
+      JOIN "Institution_Author" ia ON inst.institution_id = ia.institution_id
+      JOIN "Author" au ON ia.author_id = au.author_id
+      JOIN "Author_Article" aa ON au.author_id = aa.author_id
+      JOIN filtered_articles a ON aa.article_id = a.article_id AND ia.year = a.publication_year
+      WHERE COALESCE(inst.is_deleted, false) = false
+        AND COALESCE(au.is_deleted, false) = false
+      GROUP BY inst.institution_id, inst.display_name
     `;
 
+    // Query 3: Author Edges (joint ventures)
     const authorEdgesQuery = `
-      ${baseMatch}
-      MATCH (auth1:Author)-[:WRITES]->(a)<-[:WRITES]-(auth2:Author)
-      WHERE auth1.id < auth2.id
-      RETURN auth1.id AS from, auth2.id AS to, count(a) AS weight
+      ${cteSql}
+      SELECT 
+        aa1.author_id AS from_id, 
+        aa2.author_id AS to_id, 
+        COUNT(DISTINCT a.article_id)::integer AS weight
+      FROM filtered_articles a
+      JOIN "Author_Article" aa1 ON a.article_id = aa1.article_id
+      JOIN "Author_Article" aa2 ON a.article_id = aa2.article_id AND aa1.author_id < aa2.author_id
+      GROUP BY aa1.author_id, aa2.author_id
     `;
 
+    // Query 4: Institution Edges (affiliations)
     const instEdgesQuery = `
-      ${baseMatch}
-      MATCH (auth:Author)-[:WRITES]->(a)
-      MATCH (auth)-[:AFFILIATED_WITH]->(inst:Institution)
-      RETURN auth.id AS from, inst.id AS to, count(a) AS weight
+      ${cteSql}
+      SELECT 
+        aa.author_id AS from_id, 
+        ia.institution_id AS to_id, 
+        COUNT(DISTINCT a.article_id)::integer AS weight
+      FROM filtered_articles a
+      JOIN "Author_Article" aa ON a.article_id = aa.article_id
+      JOIN "Institution_Author" ia ON aa.author_id = ia.author_id AND ia.year = a.publication_year
+      GROUP BY aa.author_id, ia.institution_id
     `;
 
-    const params = {
-      pTopicIds: projectTopicIds,
-      pKwIds: projectKwIds,
-      fTopicIds: filterTopicIds,
-      fKwIds: filterKeywordIds,
-      fromYear: fromYearInt,
-      toYear: toYearInt
-    };
-
-    const authNodesRes = await session.run(authorNodesQuery, params);
-    const instNodesRes = await session.run(instNodesQuery, params);
-    const authEdgesRes = await session.run(authorEdgesQuery, params);
-    const instEdgesRes = await session.run(instEdgesQuery, params);
+    const authNodesRes = await client.query(authorNodesQuery, params);
+    const instNodesRes = await client.query(instNodesQuery, params);
+    const authEdgesRes = await client.query(authorEdgesQuery, params);
+    const instEdgesRes = await client.query(instEdgesQuery, params);
 
     const authNodes = [];
     const instNodes = [];
     const edgesMap = new Map();
 
-    authNodesRes.records.forEach(r => {
-      const articleCount = r.get('article_count').toNumber();
+    authNodesRes.rows.forEach(row => {
+      const articleCount = Number(row.article_count);
       authNodes.push({
-        id: `auth_${r.get('id')}`,
-        label: r.get('label') || 'Unknown Author',
+        id: `auth_${row.id}`,
+        label: row.label || 'Unknown Author',
         type: 'AUTHOR',
         size: 12 + Math.min(articleCount * 2, 20),
         color: '#FF6B00',
@@ -200,11 +289,11 @@ export async function getCollaborationNetwork(options = {}) {
       });
     });
 
-    instNodesRes.records.forEach(r => {
-      const authorCount = r.get('author_count').toNumber();
+    instNodesRes.rows.forEach(row => {
+      const authorCount = Number(row.author_count);
       instNodes.push({
-        id: `inst_${r.get('id')}`,
-        label: r.get('label') || 'Unknown Institution',
+        id: `inst_${row.id}`,
+        label: row.label || 'Unknown Institution',
         type: 'INSTITUTION',
         size: 12 + Math.min(authorCount * 2, 20),
         color: '#1A202C',
@@ -254,12 +343,12 @@ export async function getCollaborationNetwork(options = {}) {
       }
     };
 
-    authEdgesRes.records.forEach(r => {
-      addEdge(`auth_${r.get('from')}`, `auth_${r.get('to')}`, r.get('weight').toNumber(), 'joint ventures');
+    authEdgesRes.rows.forEach(row => {
+      addEdge(`auth_${row.from_id}`, `auth_${row.to_id}`, Number(row.weight), 'joint ventures');
     });
 
-    instEdgesRes.records.forEach(r => {
-      addEdge(`auth_${r.get('from')}`, `inst_${r.get('to')}`, r.get('weight').toNumber(), 'affiliations');
+    instEdgesRes.rows.forEach(row => {
+      addEdge(`auth_${row.from_id}`, `inst_${row.to_id}`, Number(row.weight), 'affiliations');
     });
 
     const finalEdges = Array.from(edgesMap.values());
@@ -277,7 +366,8 @@ export async function getCollaborationNetwork(options = {}) {
     }
 
     return result;
+
   } finally {
-    await session.close();
+    client.release();
   }
 }

@@ -33,21 +33,13 @@ export async function getDevelopmentTrends(query = {}) {
 
   const timeframeQuery = parseTimeframe(query.timeframe);
 
-  // 2. Parallel execution of all 5 independent modules
+  // 2. Sequential execution of all 5 independent modules to prevent PostgreSQL shared memory exhaustion
   const modulesStart = Date.now();
-  const [
-    publicationTrend,
-    citationMirroring,
-    topicEvolution,
-    frontierDetection,
-    forecastInsights
-  ] = await Promise.all([
-    getPublicationTrendsData(scope, timeframeQuery),
-    getCitationMirroringData(scope, timeframeQuery),
-    getTopicEvolutionData(scope, timeframeQuery),
-    getFrontierDetectionData(scope),
-    getForecastData(scope)
-  ]);
+  const publicationTrend = await getPublicationTrendsData(scope, timeframeQuery);
+  const citationMirroring = await getCitationMirroringData(scope, timeframeQuery);
+  const topicEvolution = await getTopicEvolutionData(scope, timeframeQuery);
+  const frontierDetection = await getFrontierDetectionData(scope);
+  const forecastInsights = await getForecastData(scope);
   logger.info(`[Analytics] Parallel modules execution took ${Date.now() - modulesStart}ms`);
 
   const responseData = {

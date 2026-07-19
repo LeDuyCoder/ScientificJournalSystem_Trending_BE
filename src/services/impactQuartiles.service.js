@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 
 // Cache configuration
 const CACHE_KEY_PREFIX = 'analytics:impact-quartiles';
-const CACHE_TTL = 300; // 5 minutes
+const CACHE_TTL = 43200; // 12 hours // 5 minutes
 
 /**
  * Main service to get geographical distribution analytics for a project with optional filters.
@@ -131,6 +131,7 @@ export async function getImpactQuartiles(projectId, filters = {}) {
     }
 
     // Client custom filter: subject_area
+    const customFilters = [];
     if (subjectArea) {
       // Find subject_area_id by display_name
       const saRes = await client.query(
@@ -159,7 +160,7 @@ export async function getImpactQuartiles(projectId, filters = {}) {
 
       params.push(filterCategoryIds);
       const filterCatIndex = params.length;
-      sqlFilters.push(`
+      customFilters.push(`
         (
           EXISTS (
             SELECT 1 FROM "Topic" ft
@@ -191,7 +192,7 @@ export async function getImpactQuartiles(projectId, filters = {}) {
 
       params.push(filterKeywordIds);
       const filterKwIndex = params.length;
-      sqlFilters.push(`
+      customFilters.push(`
         EXISTS (
           SELECT 1 FROM "Keyword_Article" fka
           WHERE fka.article_id = a.article_id
@@ -203,28 +204,64 @@ export async function getImpactQuartiles(projectId, filters = {}) {
     // Client custom filter: year range
     if (fromYear !== undefined && fromYear !== null) {
       params.push(Number(fromYear));
-      sqlFilters.push(`a.publication_year >= $${params.length}`);
+      customFilters.push(`a.publication_year >= $${params.length}`);
     }
     if (toYear !== undefined && toYear !== null) {
       params.push(Number(toYear));
-      sqlFilters.push(`a.publication_year <= $${params.length}`);
+      customFilters.push(`a.publication_year <= $${params.length}`);
     }
 
-    const whereClause = sqlFilters.length > 0 ? `AND ${sqlFilters.join(' AND ')}` : '';
+    // Build project scope CTE using fast UNION branches instead of slow EXISTS
+    const projectArticlesCTE = [];
+    if (projectCategoryIds.length > 0) {
+      projectArticlesCTE.push(`
+        SELECT a.article_id
+        FROM "Article" a
+        JOIN "Topic" t ON a.primary_topic = t.topic_id
+        WHERE t.subject_category_id = ANY($1::bigint[])
+          AND COALESCE(a.is_deleted, false) = false
+        UNION
+        SELECT st.article_id
+        FROM "Sub_Topic" st
+        JOIN "Topic" t ON st.topic_id = t.topic_id
+        JOIN "Article" a ON st.article_id = a.article_id
+        WHERE t.subject_category_id = ANY($1::bigint[])
+          AND COALESCE(a.is_deleted, false) = false
+      `);
+    }
+    if (projectKeywordIds.length > 0) {
+      projectArticlesCTE.push(`
+        SELECT ka.article_id
+        FROM "Keyword_Article" ka
+        JOIN "Article" a ON ka.article_id = a.article_id
+        WHERE ka.keyword_id = ANY($2::bigint[])
+          AND COALESCE(a.is_deleted, false) = false
+      `);
+    }
+
+    const projectScopeQuery = projectArticlesCTE.length > 0 
+      ? projectArticlesCTE.join(' UNION ') 
+      : 'SELECT article_id FROM "Article" WHERE COALESCE(is_deleted, false) = false';
+
+    const customWhereClause = customFilters.length > 0 ? `AND ${customFilters.join(' AND ')}` : '';
 
     // Query publication count grouped by Best SJR Quartile (rm.code = 'SJR_BEST_QUARTILE')
     const querySql = `
+      WITH project_articles AS (
+        ${projectScopeQuery}
+      )
       SELECT 
         jr.value_txt AS "quartile",
-        COUNT(DISTINCT a.article_id)::integer AS count
-      FROM "Article" a
+        COUNT(DISTINCT pa.article_id)::integer AS count
+      FROM project_articles pa
+      JOIN "Article" a ON pa.article_id = a.article_id
       JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
       JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
       JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
       JOIN "Journal_Ranking" jr ON jr.journal_id = j.journal_id AND jr.value_txt IN ('Q1', 'Q2', 'Q3', 'Q4')
       JOIN "Ranking_Metric" rm ON jr.metric_id = rm.metric_id AND rm.code = 'SJR_BEST_QUARTILE'
-      WHERE COALESCE(a.is_deleted, false) = false
-        ${whereClause}
+      WHERE 1=1
+        ${customWhereClause}
       GROUP BY jr.value_txt
     `;
 
