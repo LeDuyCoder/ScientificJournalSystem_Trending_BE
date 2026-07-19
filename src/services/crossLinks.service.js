@@ -3,7 +3,7 @@ import logger from '../utils/logger.js';
 import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
-const CACHE_TTL = 3600;
+const CACHE_TTL = 43200; // 12 hours
 
 /**
  * Service to calculate inter-disciplinary domain linkage metrics and dynamic descriptions.
@@ -144,7 +144,7 @@ export async function getCrossLinks(projectId, filters = {}) {
     const currentRows = await getArticleCategories(from_year, to_year);
     const totalArticles = currentRows.length;
     const crossArticles = currentRows.filter(r => Number(r.category_count) > 1).length;
-    
+
     const linkage = totalArticles > 0 ? Math.round((crossArticles / totalArticles) * 100) : 74; // Fallback to 74%
 
     // Calculate transfer rate (growth of cross articles YoY)

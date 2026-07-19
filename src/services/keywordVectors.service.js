@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:keywords:vectors';
-const CACHE_TTL = 300; // 5 minutes
+const CACHE_TTL = 43200; // 12 hours // 5 minutes
 
 /**
  * Fetch keyword growth and volume vectors for a project.

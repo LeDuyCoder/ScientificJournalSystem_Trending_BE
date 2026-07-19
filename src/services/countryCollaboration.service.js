@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:network:chord';
-const CACHE_TTL = 3600; // 1 giờ
+const CACHE_TTL = 43200; // 12 hours // 1 giờ
 
 /**
  * Chuẩn bị và làm sạch keywords từ query string.

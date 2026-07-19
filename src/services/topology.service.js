@@ -2,7 +2,7 @@ import pool from '../config/database.js';
 import { redisGet, redisSet } from './redis.service.js';
 import logger from '../utils/logger.js';
 
-const CACHE_TTL = 600;
+const CACHE_TTL = 43200; // 12 hours
 
 function prepareKeywords(keywords) {
   if (!keywords) return [];

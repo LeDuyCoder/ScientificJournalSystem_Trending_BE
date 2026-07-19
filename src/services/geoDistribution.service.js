@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 
 // Cache configuration
 const CACHE_KEY_PREFIX = 'analytics:geo-distribution';
-const CACHE_TTL = 300; // 5 minutes
+const CACHE_TTL = 43200; // 12 hours // 5 minutes
 
 /**
  * Validate standard ISO Alpha-2 country code

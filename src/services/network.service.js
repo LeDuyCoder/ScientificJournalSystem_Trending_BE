@@ -2,7 +2,7 @@ import pool from '../config/database.js';
 import { redisGet, redisSet } from './redis.service.js';
 import logger from '../utils/logger.js';
 
-const CACHE_TTL = 600; // 10 minutes cho Graph Data
+const CACHE_TTL = 43200; // 12 hours // 10 minutes cho Graph Data
 
 function prepareKeywords(keywords) {
   if (!keywords) return [];
@@ -268,12 +268,10 @@ export async function getCollaborationNetwork(options = {}) {
       GROUP BY aa.author_id, ia.institution_id
     `;
 
-    const [authNodesRes, instNodesRes, authEdgesRes, instEdgesRes] = await Promise.all([
-      client.query(authorNodesQuery, params),
-      client.query(instNodesQuery, params),
-      client.query(authorEdgesQuery, params),
-      client.query(instEdgesQuery, params)
-    ]);
+    const authNodesRes = await client.query(authorNodesQuery, params);
+    const instNodesRes = await client.query(instNodesQuery, params);
+    const authEdgesRes = await client.query(authorEdgesQuery, params);
+    const instEdgesRes = await client.query(instEdgesQuery, params);
 
     const authNodes = [];
     const instNodes = [];

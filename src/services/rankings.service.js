@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:rankings';
-const CACHE_TTL = 300; // 5 minutes
+const CACHE_TTL = 43200; // 12 hours // 5 minutes
 
 /**
  * Normalizes an array of items containing rawScore.
@@ -18,8 +18,12 @@ function normalizeScores(items) {
   if (items.length === 0) return [];
 
   const rawScores = items.map(item => item.rawScore);
-  const minScore = Math.min(...rawScores);
-  const maxScore = Math.max(...rawScores);
+  let minScore = Infinity;
+  let maxScore = -Infinity;
+  for (const score of rawScores) {
+    if (score < minScore) minScore = score;
+    if (score > maxScore) maxScore = score;
+  }
 
   if (maxScore === minScore) {
     const scoreVal = maxScore > 0 ? 100 : 0;

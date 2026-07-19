@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY_PREFIX = 'dashboard:search';
-const CACHE_TTL = 60; // 1 minute (short cache for dynamic suggestions)
+const CACHE_TTL = 43200; // 12 hours // 1 minute (short cache for dynamic suggestions)
 
 /**
  * Fetch search suggestions based on prefix/partial matching and entity type.
@@ -105,7 +105,7 @@ export async function getDashboardSearchSuggestions(q, type = 'all', projectId =
         FROM "Article" a
         WHERE COALESCE(a.is_deleted, false) = false
           AND LOWER(a.title) LIKE $${queryIndex}
-          ${projectId ? `AND ${scopeConditionSql}` : ''}
+          ${projectId ? `AND ${scopeConditionSql}` : ''} 
         LIMIT $${limitIndex}
       `,
       journal: `
@@ -176,17 +176,14 @@ export async function getDashboardSearchSuggestions(q, type = 'all', projectId =
     let rawSuggestions = [];
 
     if (type === 'all') {
-      const allPromises = Object.keys(queries).map(async key => {
+      for (const key of Object.keys(queries)) {
         try {
           const res = await client.query(queries[key], params);
-          return res.rows.map(r => r.name);
+          rawSuggestions.push(...res.rows.map(r => r.name));
         } catch (queryErr) {
           logger.error(`Error querying suggestions for type ${key}:`, queryErr);
-          return [];
         }
-      });
-      const results = await Promise.all(allPromises);
-      rawSuggestions = results.flat();
+      }
     } else {
       const sql = queries[type];
       if (sql) {
