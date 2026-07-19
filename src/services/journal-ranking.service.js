@@ -2,6 +2,7 @@ import pool from '../config/database.js';
 import logger from '../utils/logger.js';
 import { fetchWithCache } from './analytics/cache.service.js';
 import { getResolvedScope } from './analytics/scope.repository.js';
+import { redisGet, redisSet } from './redis.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-ranking:v2';
 const CACHE_TTL = 43200; // 12 hours // 1 hour
@@ -23,7 +24,16 @@ export async function getJournalRanking(filters) {
 
   const cacheKey = `${CACHE_KEY_PREFIX}:${scope.resolvedProjectId || 'all'}:${scope.mappedDomain}:${scope.projectCategoryIds.join(',')}:${fromYear || ''}:${toYear || ''}:${pageNum}:${limitNum}`;
 
-  return fetchWithCache(cacheKey, CACHE_TTL, async () => {
+
+
+  try {
+    const cached = await redisGet(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (e) {
+    console.warn('Redis error:', e);
+  }
+
+  const result = await (async () => {
     try {
       let params = [];
       let articleFilter = '';
@@ -38,6 +48,8 @@ export async function getJournalRanking(filters) {
         params.push(Number(toYear));
       }
       const yearSql = yearConditions.length > 0 ? `AND ${yearConditions.join(' AND ')}` : '';
+      const yearFilter = toYear ? `AND jr.year <= ${Number(toYear)}` : '';
+      const yearPrevFilter = toYear ? `AND jr.year <= ${Number(toYear) - 1}` : `AND jr.year <= ${new Date().getFullYear() - 1}`;
 
       if (scope.hasProject && scope.projectCategoryIds.length > 0) {
         articleFilter = `
@@ -131,22 +143,15 @@ export async function getJournalRanking(filters) {
         `;
       }
 
-      // Add pagination to params
       const limitParamIdx = params.length + 1;
       params.push(limitNum);
       const offsetParamIdx = params.length + 1;
       params.push(offset);
 
-      const yearFilter = toYear ? `AND jr.year <= ${Number(toYear)}` : '';
-      const yearPrevFilter = toYear ? `AND jr.year <= ${Number(toYear) - 1}` : `AND jr.year <= ${new Date().getFullYear() - 1}`;
-
       const sql = `
         ${articleFilter},
         journal_metrics_raw AS (
-          SELECT 
-            jr.journal_id,
-            jr.value_float,
-            ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
+          SELECT jr.journal_id, jr.value_float, ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
           FROM "Journal_Ranking" jr
           JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
           WHERE jr.journal_id IN (SELECT journal_id FROM journal_stats)
@@ -154,18 +159,10 @@ export async function getJournalRanking(filters) {
             ${yearFilter}
         ),
         journal_metrics AS (
-          SELECT 
-            journal_id,
-            MAX(value_float) AS impact_factor
-          FROM journal_metrics_raw
-          WHERE rn = 1
-          GROUP BY journal_id
+          SELECT journal_id, MAX(value_float) AS impact_factor FROM journal_metrics_raw WHERE rn = 1 GROUP BY journal_id
         ),
         journal_quartiles_raw AS (
-          SELECT 
-            jr.journal_id,
-            jr.value_txt AS sjr_rank,
-            ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
+          SELECT jr.journal_id, jr.value_txt AS sjr_rank, ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
           FROM "Journal_Ranking" jr
           JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
           WHERE jr.journal_id IN (SELECT journal_id FROM journal_stats)
@@ -174,18 +171,10 @@ export async function getJournalRanking(filters) {
             ${yearFilter}
         ),
         journal_quartiles AS (
-          SELECT 
-            journal_id,
-            MAX(sjr_rank) AS sjr_rank
-          FROM journal_quartiles_raw
-          WHERE rn = 1
-          GROUP BY journal_id
+          SELECT journal_id, MAX(sjr_rank) AS sjr_rank FROM journal_quartiles_raw WHERE rn = 1 GROUP BY journal_id
         ),
         journal_trend_raw AS (
-          SELECT 
-            jr.journal_id,
-            jr.value_float,
-            jr.year
+          SELECT jr.journal_id, jr.value_float, jr.year
           FROM "Journal_Ranking" jr
           JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
           WHERE jr.journal_id IN (SELECT journal_id FROM journal_stats)
@@ -194,94 +183,67 @@ export async function getJournalRanking(filters) {
             AND jr.year >= 2020
         ),
         journal_trends AS (
+          SELECT journal_id, STRING_AGG(value_float::text, ',' ORDER BY year ASC) AS trend_str FROM journal_trend_raw GROUP BY journal_id
+        ),
+        journal_page AS (
           SELECT 
-            journal_id,
-            STRING_AGG(value_float::text, ',' ORDER BY year ASC) AS trend_str
-          FROM journal_trend_raw
-          GROUP BY journal_id
+            js.journal_id AS id, j.display_name AS name, COALESCE(p.display_name, 'Unknown') AS publisher,
+            COALESCE(j.issn, 'N/A') AS issn, COALESCE(jm.impact_factor, 0) AS "impactFactor",
+            COALESCE(jq.sjr_rank, 'Q4') AS "sjrRank", jt.trend_str AS "trendStr",
+            js.article_count, COUNT(*) OVER() AS total_count
+          FROM journal_stats js
+          JOIN "Journal" j ON js.journal_id = j.journal_id
+          LEFT JOIN "Publisher" p ON j.publisher_id = p.publisher_id
+          LEFT JOIN journal_metrics jm ON js.journal_id = jm.journal_id
+          LEFT JOIN journal_quartiles jq ON js.journal_id = jq.journal_id
+          LEFT JOIN journal_trends jt ON js.journal_id = jt.journal_id
+          WHERE COALESCE(j.is_deleted, false) = false
+          ORDER BY "impactFactor" DESC, js.article_count DESC, j.display_name ASC
+          LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+        ),
+        distinct_journals AS (SELECT journal_id FROM journal_stats),
+        journal_metrics_current AS (
+          SELECT jr.journal_id, jr.value_float AS sjr, ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
+          FROM "Journal_Ranking" jr
+          JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
+          WHERE jr.journal_id IN (SELECT journal_id FROM distinct_journals) AND rm.code = 'SJR' ${yearFilter}
+        ),
+        journal_metrics_prev AS (
+          SELECT jr.journal_id, jr.value_float AS sjr, ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
+          FROM "Journal_Ranking" jr
+          JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
+          WHERE jr.journal_id IN (SELECT journal_id FROM distinct_journals) AND rm.code = 'SJR' ${yearPrevFilter}
+        ),
+        journal_summary AS (
+          SELECT 
+            (SELECT AVG(sjr) FROM journal_metrics_current WHERE rn = 1) AS avg_sjr_current,
+            (SELECT AVG(sjr) FROM journal_metrics_prev WHERE rn = 1) AS avg_sjr_prev,
+            (SELECT COUNT(*) FROM distinct_journals) AS total_journals
         )
         SELECT 
-          js.journal_id AS id,
-          j.display_name AS name,
-          COALESCE(p.display_name, 'Unknown') AS publisher,
-          COALESCE(j.issn, 'N/A') AS issn,
-          COALESCE(jm.impact_factor, 0) AS "impactFactor",
-          COALESCE(jq.sjr_rank, 'Q4') AS "sjrRank",
-          jt.trend_str AS "trendStr",
-          js.article_count,
-          COUNT(*) OVER() AS total_count
-        FROM journal_stats js
-        JOIN "Journal" j ON js.journal_id = j.journal_id
-        LEFT JOIN "Publisher" p ON j.publisher_id = p.publisher_id
-        LEFT JOIN journal_metrics jm ON js.journal_id = jm.journal_id
-        LEFT JOIN journal_quartiles jq ON js.journal_id = jq.journal_id
-        LEFT JOIN journal_trends jt ON js.journal_id = jt.journal_id
-        WHERE COALESCE(j.is_deleted, false) = false
-        ORDER BY "impactFactor" DESC, js.article_count DESC, j.display_name ASC
-        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+          (SELECT json_agg(row_to_json(jp)) FROM journal_page jp) AS journals,
+          (SELECT row_to_json(js) FROM journal_summary js) AS summary;
       `;
 
       const result = await pool.query(sql, params);
+      const row = result.rows[0];
+      const journalsData = row.journals || [];
+      const summaryData = row.summary || {};
+      
+      const totalCount = journalsData.length > 0 ? Number(journalsData[0].total_count) : 0;
+      
+      const journals = journalsData.map(j => ({
+        id: j.id,
+        name: j.name,
+        publisher: j.publisher,
+        issn: j.issn,
+        impactFactor: Number(j.impactFactor),
+        sjrRank: j.sjrRank,
+        trend: j.trendStr ? j.trendStr.split(',').map(Number) : []
+      }));
 
-      const summarySql = `
-        ${articleFilter},
-        distinct_journals AS (
-          SELECT journal_id FROM journal_stats
-        ),
-        journal_metrics_current AS (
-          SELECT 
-            jr.journal_id,
-            jr.value_float AS sjr,
-            ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
-          FROM "Journal_Ranking" jr
-          JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
-          WHERE jr.journal_id IN (SELECT journal_id FROM distinct_journals)
-            AND rm.code = 'SJR'
-            ${yearFilter}
-        ),
-        journal_metrics_prev AS (
-          SELECT 
-            jr.journal_id,
-            jr.value_float AS sjr,
-            ROW_NUMBER() OVER(PARTITION BY jr.journal_id ORDER BY jr.year DESC) as rn
-          FROM "Journal_Ranking" jr
-          JOIN "Ranking_Metric" rm ON rm.metric_id = jr.metric_id
-          WHERE jr.journal_id IN (SELECT journal_id FROM distinct_journals)
-            AND rm.code = 'SJR'
-            ${yearPrevFilter}
-        )
-        SELECT 
-          (SELECT AVG(sjr) FROM journal_metrics_current WHERE rn = 1) AS avg_sjr_current,
-          (SELECT AVG(sjr) FROM journal_metrics_prev WHERE rn = 1) AS avg_sjr_prev,
-          (SELECT COUNT(*) FROM distinct_journals) AS total_journals
-      `;
-
-      // The summary query doesn't need LIMIT/OFFSET params, so slice them off
-      const summaryParams = params.slice(0, params.length - 2);
-      const summaryRes = await pool.query(summarySql, summaryParams);
-
-      const totalCount = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
-
-      const journals = result.rows.map(row => {
-        let trend = [];
-        if (row.trendStr) {
-          trend = row.trendStr.split(',').map(Number);
-        }
-        return {
-          id: row.id,
-          name: row.name,
-          publisher: row.publisher,
-          issn: row.issn,
-          impactFactor: Number(row.impactFactor),
-          sjrRank: row.sjrRank,
-          trend: trend
-        };
-      });
-
-      const avgCurrent = Number(summaryRes.rows[0]?.avg_sjr_current || 0);
-      const avgPrev = Number(summaryRes.rows[0]?.avg_sjr_prev || 0);
-      const totalJournals = Number(summaryRes.rows[0]?.total_journals || 0);
-
+      const avgCurrent = Number(summaryData.avg_sjr_current || 0);
+      const avgPrev = Number(summaryData.avg_sjr_prev || 0);
       let percentageChange = '+0.0%';
       if (avgPrev > 0) {
         const change = ((avgCurrent - avgPrev) / avgPrev) * 100;
@@ -292,24 +254,21 @@ export async function getJournalRanking(filters) {
 
       return {
         journals,
-        pagination: {
-          totalCount,
-          page: pageNum,
-          limit: limitNum,
-          totalPages: Math.ceil(totalCount / limitNum)
-        },
+        pagination: { totalCount, page: pageNum, limit: limitNum, totalPages: Math.ceil(totalCount / limitNum) },
         summary: {
           averageImpactFactor: Math.round(avgCurrent * 100) / 100,
           percentageChange,
-          trackedCount: totalJournals,
+          trackedCount: Number(summaryData.total_journals || 0),
           limit: 150
         }
       };
-
     } catch (error) {
       logger.error('Error fetching journal ranking:', error);
       if (error.status) throw error;
       throw new Error('An internal error occurred while fetching journal ranking.');
     }
-  });
+  })();
+
+  await redisSet(cacheKey, JSON.stringify(result), CACHE_TTL).catch(e => console.warn(e));
+  return result;
 }
