@@ -24,6 +24,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000, // Timeout kết nối
 });
 
+pool.on('connect', (client) => {
+  client.query('SET max_parallel_workers_per_gather = 0;')
+    .catch(err => logger.error('Error disabling parallel workers on connect:', err.message));
+});
+
 export const checkPostgres = async () => {
   try {
     const res = await pool.query('SELECT NOW()');

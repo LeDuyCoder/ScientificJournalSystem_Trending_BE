@@ -4,7 +4,7 @@ import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:network:chord';
-const CACHE_TTL = 3600; // 1 giờ
+const CACHE_TTL = 43200; // 12 hours // 1 giờ
 
 /**
  * Chuẩn bị và làm sạch keywords từ query string.
@@ -38,66 +38,102 @@ async function getFilteredArticleIds(scope, filters, client) {
   const { subject_area, keywords, from_year, to_year } = filters;
   const { subjectCategoryIds, keywordIds } = scope;
 
-  const params = [];
-  const whereClauses = [];
+  if (subjectCategoryIds.length === 0 && keywordIds.length === 0) {
+    return [];
+  }
 
-  // --- Lớp 1: Lọc theo Project Scope (OR) ---
-  const scopeConditions = [];
+  const cteParts = [];
+  const params = [];
+
+  // 1. Project Scope topics / keywords
+  const scopeSelects = [];
   if (subjectCategoryIds.length > 0) {
     params.push(subjectCategoryIds);
-    scopeConditions.push(`(
-      EXISTS (SELECT 1 FROM "Topic" t WHERE t.topic_id = a.primary_topic AND t.subject_category_id = ANY($${params.length}::bigint[])) OR
-      EXISTS (SELECT 1 FROM "Sub_Topic" st JOIN "Topic" t ON st.topic_id = t.topic_id WHERE st.article_id = a.article_id AND t.subject_category_id = ANY($${params.length}::bigint[]))
-    )`);
+    const catIdx = params.length;
+    scopeSelects.push(`
+      SELECT a.article_id
+      FROM "Article" a
+      JOIN "Topic" t ON a.primary_topic = t.topic_id
+      WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+      UNION
+      SELECT st.article_id
+      FROM "Sub_Topic" st
+      JOIN "Topic" t ON st.topic_id = t.topic_id
+      WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+    `);
   }
   if (keywordIds.length > 0) {
     params.push(keywordIds);
-    scopeConditions.push(`EXISTS (SELECT 1 FROM "Keyword_Article" ka WHERE ka.article_id = a.article_id AND ka.keyword_id = ANY($${params.length}::bigint[]))`);
+    const kwIdx = params.length;
+    scopeSelects.push(`
+      SELECT article_id
+      FROM "Keyword_Article"
+      WHERE keyword_id = ANY($${kwIdx}::bigint[])
+    `);
   }
-  if (scopeConditions.length > 0) {
-    whereClauses.push(`(${scopeConditions.join(' OR ')})`);
-  } else {
-    return []; // No scope, no articles
-  }
+  cteParts.push(`project_scope AS (${scopeSelects.join(' UNION ')})`);
 
-  // --- Lớp 2: Lọc thêm theo yêu cầu của Client (AND) ---
+  // 2. Client filter: subject_area
   if (subject_area) {
-    const saRes = await client.query(`SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1)`, [subject_area.trim()]);
+    const saRes = await client.query(`SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`, [subject_area.trim()]);
     if (saRes.rows.length > 0) {
-      const scRes = await client.query(`SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1`, [saRes.rows[0].subject_area_id]);
+      const scRes = await client.query(`SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`, [saRes.rows[0].subject_area_id]);
       const filterCategoryIds = scRes.rows.map(r => r.subject_category_id);
       if (filterCategoryIds.length > 0) {
         params.push(filterCategoryIds);
-        whereClauses.push(`(
-          EXISTS (SELECT 1 FROM "Topic" t WHERE t.topic_id = a.primary_topic AND t.subject_category_id = ANY($${params.length}::bigint[])) OR
-          EXISTS (SELECT 1 FROM "Sub_Topic" st JOIN "Topic" t ON st.topic_id = t.topic_id WHERE st.article_id = a.article_id AND t.subject_category_id = ANY($${params.length}::bigint[]))
+        const filterCatIdx = params.length;
+        cteParts.push(`sa_filter AS (
+          SELECT a.article_id FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[])
         )`);
       } else return [];
     } else return [];
   }
 
-  if (keywords && keywords.list.length > 0) {
+  // 3. Client filter: keywords
+  if (keywords && keywords.list && keywords.list.length > 0) {
     const kwRes = await client.query(`SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`, [keywords.list.map(k => k.toLowerCase())]);
     const filterKeywordIds = kwRes.rows.map(r => r.keyword_id);
     if (filterKeywordIds.length > 0) {
       params.push(filterKeywordIds);
-      whereClauses.push(`EXISTS (SELECT 1 FROM "Keyword_Article" ka WHERE ka.article_id = a.article_id AND ka.keyword_id = ANY($${params.length}::bigint[]))`);
+      const filterKwIdx = params.length;
+      cteParts.push(`kw_filter AS (
+        SELECT article_id FROM "Keyword_Article" WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+      )`);
     } else return [];
   }
 
-  if (from_year) {
-    params.push(from_year);
-    whereClauses.push(`a.publication_year >= $${params.length}`);
+  // 4. Combine into filtered_articles
+  const joinClauses = ['JOIN project_scope ps ON a.article_id = ps.article_id'];
+  if (subject_area) {
+    joinClauses.push('JOIN sa_filter saf ON a.article_id = saf.article_id');
   }
-  if (to_year) {
-    params.push(to_year);
-    whereClauses.push(`a.publication_year <= $${params.length}`);
+  if (keywords && keywords.list && keywords.list.length > 0) {
+    joinClauses.push('JOIN kw_filter kwf ON a.article_id = kwf.article_id');
   }
 
+  const yearFilters = [];
+  if (from_year) {
+    params.push(Number(from_year));
+    yearFilters.push(`a.publication_year >= $${params.length}`);
+  }
+  if (to_year) {
+    params.push(Number(to_year));
+    yearFilters.push(`a.publication_year <= $${params.length}`);
+  }
+  const yearWhere = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
   const query = `
+    WITH ${cteParts.join(', ')}
     SELECT a.article_id, a.publication_year
     FROM "Article" a
-    WHERE COALESCE(a.is_deleted, false) = false AND ${whereClauses.join(' AND ')}
+    ${joinClauses.join(' ')}
+    WHERE COALESCE(a.is_deleted, false) = false ${yearWhere}
   `;
 
   const result = await client.query(query, params);

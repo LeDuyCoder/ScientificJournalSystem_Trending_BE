@@ -2,7 +2,7 @@ import pool from '../config/database.js';
 import { redisGet, redisSet } from './redis.service.js';
 import logger from '../utils/logger.js';
 
-const CACHE_TTL = 180; // 3 minutes
+const CACHE_TTL = 43200; // 12 hours // 3 minutes
 
 /**
  * Hàm phân tích và làm sạch keywords

@@ -6,6 +6,7 @@ import app from './src/app.js';
 import pool, { checkPostgres } from './src/config/database.js';
 import { checkRedis, closeRedis } from './src/config/redis.js';
 import { checkNeo4j, closeNeo4j } from './src/config/neo4j.js';
+import { checkMeiliConnection } from './src/config/meili.js';
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 async function bootstrap() {
@@ -38,6 +39,13 @@ async function bootstrap() {
     console.warn('Neo4j connection failed (continuing without Neo4j):', e?.message || e);
   }
 
+  try {
+    await checkMeiliConnection();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('Meilisearch connection failed (continuing without Meilisearch):', e?.message || e);
+  }
+
   const server = app.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`Server running on http://localhost:${PORT}`);
@@ -46,25 +54,22 @@ async function bootstrap() {
   const shutdown = async () => {
     // eslint-disable-next-line no-console
     console.log('Shutting down...');
+
+    // Close the HTTP server first to reject new requests
+    server.close();
+
+    // Close database pools in parallel
     try {
-      await pool.end();
+      await Promise.allSettled([
+        pool.end(),
+        closeRedis(),
+        closeNeo4j ? closeNeo4j() : Promise.resolve(),
+      ]);
     } catch (e) {
       // ignore
     }
 
-    try {
-      await closeRedis();
-    } catch (e) {
-      // ignore
-    }
-
-    try {
-      if (closeNeo4j) await closeNeo4j();
-    } catch (e) {
-      // ignore
-    }
-
-    server.close(() => process.exit(0));
+    process.exit(0);
   };
 
 

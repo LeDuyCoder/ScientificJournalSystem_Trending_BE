@@ -3,7 +3,7 @@ import logger from '../utils/logger.js';
 import { redisGet, redisSet } from './redis.service.js';
 import { getProjectScope } from './forecast.service.js';
 
-const CACHE_TTL = 3600;
+const CACHE_TTL = 43200; // 12 hours
 
 /**
  * Service to calculate inter-disciplinary domain linkage metrics and dynamic descriptions.
@@ -30,44 +30,112 @@ export async function getCrossLinks(projectId, filters = {}) {
     }
 
     const getArticleCategories = async (fromYear, toYear) => {
+      const cteParts = [];
       const params = [];
-      const whereClauses = [];
 
-      // Scope filters
-      const scopeConditions = [];
+      // 1. Project Scope topics / keywords
+      const scopeSelects = [];
       if (scope.subjectCategoryIds.length > 0) {
         params.push(scope.subjectCategoryIds);
-        scopeConditions.push(`(
-          EXISTS (SELECT 1 FROM "Topic" t WHERE t.topic_id = a.primary_topic AND t.subject_category_id = ANY($${params.length}::bigint[])) OR
-          EXISTS (SELECT 1 FROM "Sub_Topic" st JOIN "Topic" t ON st.topic_id = t.topic_id WHERE st.article_id = a.article_id AND t.subject_category_id = ANY($${params.length}::bigint[]))
-        )`);
+        const catIdx = params.length;
+        scopeSelects.push(`
+          SELECT a.article_id
+          FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT st.article_id
+          FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+        `);
       }
       if (scope.keywordIds.length > 0) {
         params.push(scope.keywordIds);
-        scopeConditions.push(`EXISTS (SELECT 1 FROM "Keyword_Article" ka WHERE ka.article_id = a.article_id AND ka.keyword_id = ANY($${params.length}::bigint[]))`);
+        const kwIdx = params.length;
+        scopeSelects.push(`
+          SELECT article_id
+          FROM "Keyword_Article"
+          WHERE keyword_id = ANY($${kwIdx}::bigint[])
+        `);
       }
-      if (scopeConditions.length > 0) {
-        whereClauses.push(`(${scopeConditions.join(' OR ')})`);
-      } else {
-        return [];
+      cteParts.push(`project_scope AS (${scopeSelects.join(' UNION ')})`);
+
+      // 2. Client filter: subject_area
+      if (subject_area) {
+        const saRes = await client.query(`SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`, [subject_area.trim()]);
+        if (saRes.rows.length > 0) {
+          const scRes = await client.query(`SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`, [saRes.rows[0].subject_area_id]);
+          const filterCategoryIds = scRes.rows.map(r => r.subject_category_id);
+          if (filterCategoryIds.length > 0) {
+            params.push(filterCategoryIds);
+            const filterCatIdx = params.length;
+            cteParts.push(`sa_filter AS (
+              SELECT a.article_id FROM "Article" a
+              JOIN "Topic" t ON a.primary_topic = t.topic_id
+              WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
+              UNION
+              SELECT st.article_id FROM "Sub_Topic" st
+              JOIN "Topic" t ON st.topic_id = t.topic_id
+              WHERE t.subject_category_id = ANY($${filterCatIdx}::bigint[])
+            )`);
+          }
+        }
       }
 
+      // 3. Client filter: keywords
+      let keywordList = [];
+      if (keywords) {
+        keywordList = Array.isArray(keywords)
+          ? keywords
+          : String(keywords).split(',').map(s => s.trim()).filter(Boolean);
+      }
+      if (keywordList.length > 0) {
+        const kwRes = await client.query(`SELECT keyword_id FROM "Keyword" WHERE LOWER(display_name) = ANY($1::text[])`, [keywordList.map(k => k.toLowerCase())]);
+        const filterKeywordIds = kwRes.rows.map(r => r.keyword_id);
+        if (filterKeywordIds.length > 0) {
+          params.push(filterKeywordIds);
+          const filterKwIdx = params.length;
+          cteParts.push(`kw_filter AS (
+            SELECT article_id FROM "Keyword_Article" WHERE keyword_id = ANY($${filterKwIdx}::bigint[])
+          )`);
+        }
+      }
+
+      // 4. Combine into filtered_articles
+      const joinClauses = ['JOIN project_scope ps ON a.article_id = ps.article_id'];
+      if (subject_area) {
+        joinClauses.push('JOIN sa_filter saf ON a.article_id = saf.article_id');
+      }
+      if (keywordList.length > 0) {
+        joinClauses.push('JOIN kw_filter kwf ON a.article_id = kwf.article_id');
+      }
+
+      const yearFilters = [];
       if (fromYear) {
-        params.push(fromYear);
-        whereClauses.push(`a.publication_year >= $${params.length}`);
+        params.push(Number(fromYear));
+        yearFilters.push(`a.publication_year >= $${params.length}`);
       }
       if (toYear) {
-        params.push(toYear);
-        whereClauses.push(`a.publication_year <= $${params.length}`);
+        params.push(Number(toYear));
+        yearFilters.push(`a.publication_year <= $${params.length}`);
       }
+      const yearWhere = yearFilters.length > 0 ? `AND ${yearFilters.join(' AND ')}` : '';
+
+      cteParts.push(`filtered_articles AS (
+        SELECT a.article_id, a.primary_topic
+        FROM "Article" a
+        ${joinClauses.join(' ')}
+        WHERE COALESCE(a.is_deleted, false) = false ${yearWhere}
+      )`);
 
       const query = `
-        SELECT a.article_id, COUNT(DISTINCT sc.subject_category_id) as category_count
-        FROM "Article" a
-        LEFT JOIN "Topic" t ON a.primary_topic = t.topic_id
+        WITH ${cteParts.join(', ')}
+        SELECT fa.article_id, COUNT(DISTINCT sc.subject_category_id) as category_count
+        FROM filtered_articles fa
+        LEFT JOIN "Topic" t ON fa.primary_topic = t.topic_id
         LEFT JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-        WHERE COALESCE(a.is_deleted, false) = false AND ${whereClauses.join(' AND ')}
-        GROUP BY a.article_id
+        GROUP BY fa.article_id
       `;
       const res = await client.query(query, params);
       return res.rows;
@@ -76,7 +144,7 @@ export async function getCrossLinks(projectId, filters = {}) {
     const currentRows = await getArticleCategories(from_year, to_year);
     const totalArticles = currentRows.length;
     const crossArticles = currentRows.filter(r => Number(r.category_count) > 1).length;
-    
+
     const linkage = totalArticles > 0 ? Math.round((crossArticles / totalArticles) * 100) : 74; // Fallback to 74%
 
     // Calculate transfer rate (growth of cross articles YoY)

@@ -1,48 +1,60 @@
-import { neo4jDriver } from '../../config/neo4j.js';
+import pool from '../../config/database.js';
 import { fetchWithCache } from './cache.service.js';
 import logger from '../../utils/logger.js';
 
 const FRONTIER_TTL = 3600; // 1 hour
 
 export async function getFrontierDetectionData(scope) {
-  const cacheKey = `analytics:frontier:v4:${scope.resolvedProjectId || 'all'}:${scope.mappedDomain}:${scope.topicNames.join(',')}`;
+  const cacheKey = `analytics:frontier:v5:${scope.resolvedProjectId || 'all'}:${scope.mappedDomain}:${scope.projectCategoryIds.join(',')}`;
   
   return fetchWithCache(cacheKey, FRONTIER_TTL, async () => {
     let frontierDetectionItems = [];
 
-    let neo4jSession = null;
     try {
-      if (!neo4jDriver || !neo4jDriver.session) {
-        throw new Error('Neo4j driver is not configured');
+      let params = [];
+      let cteCondition = '';
+      let joins = `JOIN "Article" a ON a.primary_topic = t.topic_id`;
+      
+      if (scope.hasProject && scope.projectCategoryIds.length > 0) {
+        cteCondition = `t.subject_category_id = ANY($1::bigint[]) AND coalesce(a.is_deleted, false) = false`;
+        params = [scope.projectCategoryIds];
+      } else if (scope.mappedDomain && scope.mappedDomain !== 'all') {
+        joins += ` JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+                   JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id`;
+        cteCondition = `LOWER(sa.display_name) = LOWER($1) AND coalesce(a.is_deleted, false) = false`;
+        params = [scope.mappedDomain];
+      } else {
+        cteCondition = `coalesce(a.is_deleted, false) = false`;
       }
-      neo4jSession = neo4jDriver.session({ defaultAccessMode: 'READ' });
 
-      // Optimized Cypher: Push aggregations to the Article node directly if citation_count is stored on the node
-      // Avoiding traversing the [:REFERENCES] relationships entirely for purely counting citations.
-      const cypher = `
-        MATCH (a:Article)-[:HAS_TOPIC]->(t:Topic)
-        WHERE coalesce(a.is_deleted, false) = false
-          AND ($subjectArea = "" OR toLower(t.name) = toLower($subjectArea))
-          AND (size($topicNames) = 0 OR t.name IN $topicNames)
-        WITH t, count(a) AS articleCount, sum(coalesce(a.citation_count, 0)) AS citationCount
-        WHERE articleCount > 0
-        RETURN t.name AS topic,
-               toFloat(citationCount) / articleCount AS rawIF,
-               toFloat(citationCount) AS rawVelocity
-        ORDER BY rawIF DESC
+      // We calculate rawIF and rawVelocity directly from Postgres
+      // rawVelocity = total citations
+      // rawIF = total citations / article count
+      const sql = `
+        SELECT 
+          t.display_name AS topic,
+          COUNT(a.article_id)::integer AS article_count,
+          SUM(COALESCE(a.citation_count, 0))::integer AS citation_count
+        FROM "Topic" t
+        ${joins}
+        WHERE ${cteCondition}
+        GROUP BY t.topic_id, t.display_name
+        HAVING COUNT(a.article_id) > 0
+        ORDER BY (SUM(COALESCE(a.citation_count, 0))::float / COUNT(a.article_id)) DESC
         LIMIT 10
       `;
 
-      const result = await neo4jSession.run(cypher, {
-        subjectArea: scope.mappedDomain !== 'all' ? scope.mappedDomain : '',
-        topicNames: scope.topicNames || []
-      });
+      const result = await pool.query(sql, params);
 
-      const rawRecords = result.records.map(r => ({
-        topic: r.get('topic'),
-        rawIF: r.get('rawIF'),
-        rawVelocity: r.get('rawVelocity')
-      }));
+      const rawRecords = result.rows.map(r => {
+        const articleCount = parseInt(r.article_count, 10);
+        const citationCount = parseInt(r.citation_count, 10);
+        return {
+          topic: r.topic,
+          rawIF: citationCount / articleCount,
+          rawVelocity: citationCount
+        };
+      });
 
       const maxIF = rawRecords.reduce((max, r) => Math.max(max, r.rawIF), 0) || 1.0;
       const scaleIF = 10.0 / maxIF;
@@ -82,9 +94,7 @@ export async function getFrontierDetectionData(scope) {
         };
       });
     } catch (err) {
-      logger.error('Error fetching frontier topics:', err);
-    } finally {
-      if (neo4jSession) await neo4jSession.close();
+      logger.error('Error fetching frontier topics from PostgreSQL:', err);
     }
 
     return { items: frontierDetectionItems };
