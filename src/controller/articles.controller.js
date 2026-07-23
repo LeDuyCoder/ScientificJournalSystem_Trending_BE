@@ -26,8 +26,9 @@ export async function searchArticles(req, res, next) {
     });
 
     res.json({
-      source: 'neo4j',
-      ...data,
+      code: 200,
+      message: 'Search articles graph completed successfully',
+      data,
     });
   } catch (err) {
     next(err);
