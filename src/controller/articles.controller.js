@@ -2,7 +2,7 @@
  * Express controller for article-related endpoints.
  */
 
-import { searchArticlesByKeyword } from '../services/graph.service.js';
+import { searchArticlesByKeyword } from '../services/search/graph.service.js';
 
 /**
  * Search ARTICLE nodes by keyword and return nodes + `REFERENCES` relationships.

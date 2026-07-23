@@ -1,6 +1,6 @@
-﻿import crypto from 'crypto';
-import { chatPipeline } from '../services/rag-system.service.js';
-import { redisGet, redisSet } from '../services/redis.service.js';
+import crypto from 'crypto';
+import { chatPipeline } from '../services/rag/rag-system.service.js';
+import { redisGet, redisSet } from '../services/infrastructure/redis.service.js';
 import { redisClient } from '../config/redis.js';
 import {
   createChatMessage,
@@ -9,7 +9,7 @@ import {
   getChatMessageById,
   getProjectChatMessages,
   updateChatMessage
-} from '../services/projectChatMessage.service.js';
+} from '../services/rag/projectChatMessage.service.js';
 import logger from '../utils/logger.js';
 
 const CHAT_CACHE_PREFIX = 'cache:chat:v3';
@@ -42,7 +42,7 @@ const saveChatMessageSafely = async (payload) => {
   try {
     return await createChatMessage(payload);
   } catch (error) {
-    logger.warn('[CHAT HISTORY] Không thể lưu lịch sử chat:', error?.message || error);
+    logger.warn('[CHAT HISTORY] Kh�ng th? luu l?ch s? chat:', error?.message || error);
     return null;
   }
 };
@@ -80,7 +80,7 @@ export const chatRagSystem = async (req, res) => {
   if (!userId) {
     return res.status(401).json({
       success: false,
-      message: 'Vui lòng đăng nhập để tiếp tục.'
+      message: 'Vui l�ng dang nh?p d? ti?p t?c.'
     });
   }
 
@@ -90,7 +90,7 @@ export const chatRagSystem = async (req, res) => {
     const userQuestion = requestBody.message;
     const cacheKey = buildChatCacheKey(projectId, userQuestion);
 
-    logger.info(`[CHAT API] Nhận yêu cầu: ${userQuestion} (Project ID: ${projectId}, User ID: ${userId})`);
+    logger.info(`[CHAT API] Nh?n y�u c?u: ${userQuestion} (Project ID: ${projectId}, User ID: ${userId})`);
 
     userMessage = await saveChatMessageSafely({
       projectId,
@@ -127,7 +127,7 @@ export const chatRagSystem = async (req, res) => {
         }
         logger.info(`[CHAT CACHE] Cache miss cho Project ID: ${projectId}, Key: ${cacheKey}`);
       } catch (cacheError) {
-        logger.warn('[CHAT CACHE] Không thể đọc cache Redis, tiếp tục xử lý pipeline:', cacheError?.message || cacheError);
+        logger.warn('[CHAT CACHE] Kh�ng th? d?c cache Redis, ti?p t?c x? l� pipeline:', cacheError?.message || cacheError);
       }
     }
 
@@ -136,12 +136,12 @@ export const chatRagSystem = async (req, res) => {
     if (redisClient?.isOpen && !result.fromFallback) {
       try {
         await redisSet(cacheKey, JSON.stringify(result), CHAT_CACHE_TTL_SECONDS);
-        logger.info(`[CHAT CACHE] Đã lưu cache cho Project ID: ${projectId}, Key: ${cacheKey}`);
+        logger.info(`[CHAT CACHE] �� luu cache cho Project ID: ${projectId}, Key: ${cacheKey}`);
       } catch (cacheError) {
-        logger.warn('[CHAT CACHE] Không thể lưu cache Redis:', cacheError?.message || cacheError);
+        logger.warn('[CHAT CACHE] Kh�ng th? luu cache Redis:', cacheError?.message || cacheError);
       }
     } else if (result.fromFallback) {
-      logger.info('[CHAT CACHE] Bỏ qua lưu cache vì AI dùng Smart Fallback (kết quả có thể chưa tối ưu).');
+      logger.info('[CHAT CACHE] B? qua luu cache v� AI d�ng Smart Fallback (k?t qu? c� th? chua t?i uu).');
     }
 
     const assistantMessage = await saveChatMessageSafely({
@@ -163,13 +163,13 @@ export const chatRagSystem = async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error('[CHAT API] Lỗi xử lý yêu cầu Chatbot:', error);
+    logger.error('[CHAT API] L?i x? l� y�u c?u Chatbot:', error);
 
     await saveChatMessageSafely({
       projectId,
       userId,
       role: 'ASSISTANT',
-      content: 'Đã xảy ra lỗi hệ thống, vui lòng thử lại sau.',
+      content: '�� x?y ra l?i h? th?ng, vui l�ng th? l?i sau.',
       model: getActiveChatModel(),
       latencyMs: Date.now() - startedAt,
       status: 'ERROR'
@@ -177,7 +177,7 @@ export const chatRagSystem = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: 'Đã xảy ra lỗi hệ thống, vui lòng thử lại sau.'
+      message: '�� x?y ra l?i h? th?ng, vui l�ng th? l?i sau.'
     });
   }
 };
@@ -206,8 +206,8 @@ export const createChatMessageHandler = async (req, res) => {
 
     return res.status(201).json({ success: true, data: message });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] Lỗi tạo message:', error);
-    return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi tạo chat message.' });
+    logger.error('[CHAT MESSAGE] L?i t?o message:', error);
+    return res.status(500).json({ success: false, message: '�� x?y ra l?i khi t?o chat message.' });
   }
 };
 
@@ -228,8 +228,8 @@ export const getChatHistory = async (req, res) => {
 
     return res.status(200).json({ success: true, data: messages });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] Lỗi lấy lịch sử chat:', error);
-    return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi lấy lịch sử chat.' });
+    logger.error('[CHAT MESSAGE] L?i l?y l?ch s? chat:', error);
+    return res.status(500).json({ success: false, message: '�� x?y ra l?i khi l?y l?ch s? chat.' });
   }
 };
 
@@ -250,8 +250,8 @@ export const getChatMessageDetail = async (req, res) => {
 
     return res.status(200).json({ success: true, data: message });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] Lỗi lấy chi tiết message:', error);
-    return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi lấy chi tiết chat message.' });
+    logger.error('[CHAT MESSAGE] L?i l?y chi ti?t message:', error);
+    return res.status(500).json({ success: false, message: '�� x?y ra l?i khi l?y chi ti?t chat message.' });
   }
 };
 
@@ -272,8 +272,8 @@ export const updateChatMessageHandler = async (req, res) => {
 
     return res.status(200).json({ success: true, data: message });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] Lỗi cập nhật message:', error);
-    return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi cập nhật chat message.' });
+    logger.error('[CHAT MESSAGE] L?i c?p nh?t message:', error);
+    return res.status(500).json({ success: false, message: '�� x?y ra l?i khi c?p nh?t chat message.' });
   }
 };
 
@@ -290,8 +290,8 @@ export const deleteChatMessageHandler = async (req, res) => {
     const result = await deleteChatMessage(messageId, projectId, userId);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] Lỗi xóa một message:', error);
-    return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi xóa chat message.' });
+    logger.error('[CHAT MESSAGE] L?i x�a m?t message:', error);
+    return res.status(500).json({ success: false, message: '�� x?y ra l?i khi x�a chat message.' });
   }
 };
 
@@ -307,7 +307,7 @@ export const clearChatHistory = async (req, res) => {
     const result = await deleteProjectChatMessages(projectId, userId);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] Lỗi xóa lịch sử chat:', error);
-    return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi xóa lịch sử chat.' });
+    logger.error('[CHAT MESSAGE] L?i x�a l?ch s? chat:', error);
+    return res.status(500).json({ success: false, message: '�� x?y ra l?i khi x�a l?ch s? chat.' });
   }
 };

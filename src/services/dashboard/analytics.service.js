@@ -1,0 +1,306 @@
+import pool from '../../config/database.js';
+import logger from '../../utils/logger.js';
+import { getProjectScope } from '../trends/forecast.service.js'; // Tái sử dụng hàm lấy scope
+import { redisGet, redisSet } from '../infrastructure/redis.service.js';
+
+// Cache settings
+const CACHE_KEY_PREFIX = 'analytics:top-entities';
+const CACHE_TTL = 43200; // 12 hours // Cache for 1 hour
+
+/**
+ * Tính điểm thô cho một tổ chức dựa trên các chỉ số.
+ * @param {object} metrics - Các chỉ số của tổ chức.
+ * @param {number} metrics.article_count - Số lượng bài báo.
+ * @param {number} metrics.citation_count - Tổng số trích dẫn.
+ * @param {number} metrics.h_index - Chỉ số H-index trung bình của các tác giả.
+ * @returns {number} Điểm thô.
+ */
+function calculateRawScore(metrics) {
+  const articleWeight = 0.4;
+  const citationWeight = 0.5;
+  const hIndexWeight = 0.1; // Dùng H-index thay cho impact_score vì dễ tính hơn từ DB
+
+  const score =
+    (metrics.article_count || 0) * articleWeight +
+    (metrics.citation_count || 0) * citationWeight +
+    (metrics.h_index || 0) * hIndexWeight;
+
+  return score;
+}
+
+/**
+ * Chuẩn hóa điểm về thang 0-100.
+ * @param {Array<object>} entities - Danh sách các tổ chức với điểm thô.
+ * @returns {Array<object>} Danh sách các tổ chức với điểm đã chuẩn hóa.
+ */
+function normalizeScores(entities) {
+  if (entities.length === 0) {
+    return [];
+  }
+
+  const scores = entities.map((e) => e.rawScore);
+  const minScore = Math.min(...scores);
+  const maxScore = Math.max(...scores);
+
+  if (maxScore === minScore) {
+    return entities.map((e) => ({
+      name: e.name,
+      score: 100
+    }));
+  }
+
+  return entities.map((e) => {
+    const normalized = ((e.rawScore - minScore) / (maxScore - minScore)) * 100;
+    return {
+      name: e.name,
+      score: Math.round(normalized * 10) / 10 // Làm tròn 1 chữ số thập phân
+    };
+  });
+}
+
+/**
+ * Lấy danh sách các tổ chức hàng đầu dựa trên bộ lọc.
+ * @param {object} filters
+ * @param {string} filters.projectId
+ * @param {string} [filters.entityType]
+ * @param {number} [filters.fromYear]
+ * @param {number} [filters.toYear]
+ * @param {number} filters.limit
+ * @returns {Promise<Array<{name: string, score: number}>>}
+ */
+export async function getTopEntities(filters) {
+  // --- Caching Logic ---
+  const { projectId, entityType, fromYear, toYear, limit } = filters;
+  const cacheKeyParts = [
+    CACHE_KEY_PREFIX,
+    `project:${projectId}`,
+    `limit:${limit}`
+  ];
+  if (entityType) cacheKeyParts.push(`type:${entityType}`);
+  if (fromYear) cacheKeyParts.push(`from:${fromYear}`);
+  if (toYear) cacheKeyParts.push(`to:${toYear}`);
+
+  const cacheKey = cacheKeyParts.join(':');
+
+  try {
+    const cachedData = await redisGet(cacheKey);
+    if (cachedData) {
+      logger.info(`[Redis] Cache hit for top entities: ${cacheKey}`);
+      return JSON.parse(cachedData);
+    }
+    logger.info(`[Redis] Cache miss for top entities: ${cacheKey}`);
+  } catch (err) {
+    logger.warn('Failed to get top entities from Redis, querying database:', err?.message || err);
+  }
+
+  const client = await pool.connect();
+  try {
+    // 1. Lấy phạm vi phân tích của project
+    const scope = await getProjectScope(client, filters.projectId);
+    if (scope.subjectCategoryIds.length === 0 && scope.keywordIds.length === 0) {
+      logger.warn(`Project ${filters.projectId} has no scope. Returning empty top entities.`);
+      return [];
+    }
+
+    // 2. Xây dựng câu truy vấn SQL
+    const params = [];
+    const whereClauses = [];
+
+    // Lọc theo phạm vi project (subject categories và keywords)
+    const scopeFilters = [];
+    if (scope.subjectCategoryIds.length > 0) {
+      params.push(scope.subjectCategoryIds);
+      scopeFilters.push(`
+        EXISTS (
+          SELECT 1 FROM "Topic" t WHERE t.topic_id = a.primary_topic AND t.subject_category_id = ANY($${params.length}::bigint[])
+        ) OR EXISTS (
+          SELECT 1 FROM "Sub_Topic" st JOIN "Topic" t ON st.topic_id = t.topic_id
+          WHERE st.article_id = a.article_id AND t.subject_category_id = ANY($${params.length}::bigint[])
+        )
+      `);
+    }
+    if (scope.keywordIds.length > 0) {
+      params.push(scope.keywordIds);
+      scopeFilters.push(`EXISTS (SELECT 1 FROM "Keyword_Article" ka WHERE ka.article_id = a.article_id AND ka.keyword_id = ANY($${params.length}::bigint[]))`);
+    }
+    whereClauses.push(`(${scopeFilters.join(' OR ')})`);
+
+    // Lọc theo các tham số từ query
+    if (filters.entityType) {
+      params.push(filters.entityType);
+      whereClauses.push(`i.type = $${params.length}`);
+    }
+    if (filters.fromYear) {
+      params.push(filters.fromYear);
+      whereClauses.push(`a.publication_year >= $${params.length}`);
+    }
+    if (filters.toYear) {
+      params.push(filters.toYear);
+      whereClauses.push(`a.publication_year <= $${params.length}`);
+    }
+
+    const query = `
+      SELECT
+        i.display_name AS name,
+        COUNT(DISTINCT a.article_id) AS article_count,
+        COALESCE(SUM(a.citation_count), 0) AS citation_count,
+        COALESCE(AVG(au.h_index), 0) AS h_index
+      FROM "Institution" i
+      JOIN "Institution_Author" ia ON i.institution_id = ia.institution_id
+      JOIN "Author" au ON ia.author_id = au.author_id
+      JOIN "Author_Article" aa ON au.author_id = aa.author_id
+      JOIN "Article" a ON aa.article_id = a.article_id
+      WHERE ${whereClauses.join(' AND ')}
+        AND COALESCE(a.is_deleted, false) = false
+        AND COALESCE(i.is_deleted, false) = false
+      GROUP BY i.institution_id, i.display_name
+    `;
+
+    const result = await client.query(query, params);
+
+    // 3. Tính điểm và chuẩn hóa
+    const entitiesWithRawScore = result.rows.map(row => ({
+      name: row.name,
+      rawScore: calculateRawScore(row)
+    }));
+
+    const results = normalizeScores(entitiesWithRawScore);
+
+    // 4. Sắp xếp và giới hạn kết quả
+    const finalData = results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, filters.limit);
+
+    // --- Save to cache before returning ---
+    try {
+      await redisSet(cacheKey, JSON.stringify(finalData), CACHE_TTL);
+      logger.info(`[Redis] Top entities cached: ${cacheKey}`);
+    } catch (err) {
+      logger.warn('Failed to set top entities in Redis cache:', err?.message || err);
+    }
+
+    return finalData;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Lấy danh sách Subject Categories của một project (thông qua subject area).
+ * Hỗ trợ phân trang và tìm kiếm theo tên.
+ * @param {object} filters
+ * @param {string} filters.projectId - ID của project.
+ * @param {number} [filters.page=1] - Trang hiện tại.
+ * @param {number} [filters.limit=10] - Số lượng bản ghi mỗi trang.
+ * @param {string} [filters.search] - Từ khóa tìm kiếm theo display_name.
+ * @returns {Promise<{items: Array, pagination: object}>}
+ */
+export async function getProjectSubjectCategories(filters) {
+  const { projectId, page = 1, limit = 10, search } = filters;
+  const offset = (page - 1) * limit;
+
+  // --- Caching Logic ---
+  const cacheKeyParts = [
+    'analytics:subject-categories',
+    `project:${projectId}`,
+    `page:${page}`,
+    `limit:${limit}`,
+  ];
+  if (search) cacheKeyParts.push(`search:${search}`);
+  const cacheKey = cacheKeyParts.join(':');
+
+  try {
+    const cachedData = await redisGet(cacheKey);
+    if (cachedData) {
+      logger.info(`[Redis] Cache hit for subject categories: ${cacheKey}`);
+      return JSON.parse(cachedData);
+    }
+    logger.info(`[Redis] Cache miss for subject categories: ${cacheKey}`);
+  } catch (err) {
+    logger.warn('Failed to get subject categories from Redis, querying database:', err?.message || err);
+  }
+
+  const client = await pool.connect();
+  try {
+    // 1. Lấy subject_area_id của project
+    const projectRes = await client.query(
+      `SELECT p.project_id, p.subject_area, sa.display_name AS subject_area_name
+       FROM "Project" p
+       JOIN "Subject_Area" sa ON p.subject_area = sa.subject_area_id
+       WHERE p.project_id = $1
+         AND COALESCE(sa.is_deleted, false) = false`,
+      [projectId]
+    );
+
+    if (projectRes.rows.length === 0) {
+      const err = new Error('Project not found or has no associated subject area');
+      err.status = 404;
+      throw err;
+    }
+
+    const { subject_area: subjectAreaId, subject_area_name: subjectAreaName } = projectRes.rows[0];
+
+    // 2. Build dynamic WHERE clause
+    const params = [subjectAreaId];
+    const whereClauses = [
+      `subject_area_id = $1`,
+      `COALESCE(is_deleted, false) = false`,
+    ];
+
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      whereClauses.push(`LOWER(display_name) LIKE $${params.length}`);
+    }
+
+    const whereSQL = whereClauses.join(' AND ');
+
+    // 3. Count total
+    const countRes = await client.query(
+      `SELECT COUNT(*) AS total FROM "Subject_Category" WHERE ${whereSQL}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].total, 10);
+
+    // 4. Fetch paginated items
+    params.push(limit);
+    params.push(offset);
+    const itemsRes = await client.query(
+      `SELECT subject_category_id, display_name, description
+       FROM "Subject_Category"
+       WHERE ${whereSQL}
+       ORDER BY display_name ASC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const result = {
+      subject_area: {
+        id: Number(subjectAreaId),
+        name: subjectAreaName,
+      },
+      items: itemsRes.rows.map(row => ({
+        subject_category_id: Number(row.subject_category_id),
+        display_name: row.display_name,
+        description: row.description || null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: Math.ceil(total / limit),
+      },
+    };
+
+    // --- Save to cache ---
+    try {
+      await redisSet(cacheKey, JSON.stringify(result), CACHE_TTL);
+      logger.info(`[Redis] Subject categories cached: ${cacheKey}`);
+    } catch (err) {
+      logger.warn('Failed to set subject categories in Redis cache:', err?.message || err);
+    }
+
+    return result;
+  } finally {
+    client.release();
+  }
+}

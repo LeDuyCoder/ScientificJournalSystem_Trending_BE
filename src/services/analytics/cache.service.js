@@ -1,4 +1,4 @@
-import { redisGet, redisSet } from '../redis.service.js';
+import { redisGet, redisSet } from '../infrastructure/redis.service.js';
 import logger from '../../utils/logger.js';
 
 /**

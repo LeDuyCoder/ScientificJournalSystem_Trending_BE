@@ -4,7 +4,11 @@ import { getCitationMirroringData } from './citation.service.js';
 import { getTopicEvolutionData } from './topic.service.js';
 import { getFrontierDetectionData } from './frontier.service.js';
 import { getForecastData } from './forecast.service.js';
+import { fetchWithCache } from './cache.service.js';
 import logger from '../../utils/logger.js';
+
+const CACHE_KEY_PREFIX = 'analytics:development-trends:v1';
+const CACHE_TTL = 43200; // 12 hours
 
 function parseTimeframe(timeframe) {
   const currentYear = new Date().getFullYear();
@@ -23,34 +27,38 @@ function parseTimeframe(timeframe) {
 }
 
 export async function getDevelopmentTrends(query = {}) {
-  const startTotal = Date.now();
-  logger.info(`[Analytics] Starting development trends orchestrator for project ${query.project_id || 'all'}`);
+  const cacheKey = `${CACHE_KEY_PREFIX}:${query.project_id || 'all'}:${query.timeframe || 'default'}:${query.domain || 'all'}:${query.subject_category || 'all'}:${query.region || 'global'}`;
 
-  // 1. Resolve highly-cached scope
-  const scopeStart = Date.now();
-  const scope = await getResolvedScope(query);
-  logger.info(`[Analytics] Scope resolution took ${Date.now() - scopeStart}ms`);
+  return fetchWithCache(cacheKey, CACHE_TTL, async () => {
+    const startTotal = Date.now();
+    logger.info(`[Analytics] Starting development trends orchestrator for project ${query.project_id || 'all'}`);
 
-  const timeframeQuery = parseTimeframe(query.timeframe);
+    // 1. Resolve highly-cached scope
+    const scopeStart = Date.now();
+    const scope = await getResolvedScope(query);
+    logger.info(`[Analytics] Scope resolution took ${Date.now() - scopeStart}ms`);
 
-  // 2. Sequential execution of all 5 independent modules to prevent PostgreSQL shared memory exhaustion
-  const modulesStart = Date.now();
-  const publicationTrend = await getPublicationTrendsData(scope, timeframeQuery);
-  const citationMirroring = await getCitationMirroringData(scope, timeframeQuery);
-  const topicEvolution = await getTopicEvolutionData(scope, timeframeQuery);
-  const frontierDetection = await getFrontierDetectionData(scope);
-  const forecastInsights = await getForecastData(scope);
-  logger.info(`[Analytics] Parallel modules execution took ${Date.now() - modulesStart}ms`);
+    const timeframeQuery = parseTimeframe(query.timeframe);
 
-  const responseData = {
-    publicationTrend,
-    citationMirroring,
-    topicEvolution,
-    frontierDetection,
-    forecastInsights
-  };
+    // 2. Sequential execution of all 5 independent modules to prevent PostgreSQL shared memory exhaustion
+    const modulesStart = Date.now();
+    const publicationTrend = await getPublicationTrendsData(scope, timeframeQuery);
+    const citationMirroring = await getCitationMirroringData(scope, timeframeQuery);
+    const topicEvolution = await getTopicEvolutionData(scope, timeframeQuery);
+    const frontierDetection = await getFrontierDetectionData(scope);
+    const forecastInsights = await getForecastData(scope);
+    logger.info(`[Analytics] Parallel modules execution took ${Date.now() - modulesStart}ms`);
 
-  logger.info(`[Analytics] Total orchestrator time: ${Date.now() - startTotal}ms`);
-  
-  return responseData;
+    const responseData = {
+      publicationTrend,
+      citationMirroring,
+      topicEvolution,
+      frontierDetection,
+      forecastInsights
+    };
+
+    logger.info(`[Analytics] Total orchestrator time: ${Date.now() - startTotal}ms`);
+    
+    return responseData;
+  });
 }
