@@ -1,4 +1,4 @@
-import { getDashboardStats } from '../services/dashboard.service.js';
+import { getDashboardStats } from '../services/dashboard/dashboard.service.js';
 
 /**
  * Endpoint xử lý yêu cầu GET /dashboard/stats

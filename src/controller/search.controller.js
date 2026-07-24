@@ -1,4 +1,4 @@
-import { searchEntities } from '../services/search.service.js';
+import { searchEntities } from '../services/search/search.service.js';
 
 /**
  * Handle GET /search.

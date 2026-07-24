@@ -2,7 +2,7 @@
  * Express controller for article-related endpoints.
  */
 
-import { searchArticlesByKeyword } from '../services/graph.service.js';
+import { searchArticlesByKeyword } from '../services/search/graph.service.js';
 
 /**
  * Search ARTICLE nodes by keyword and return nodes + `REFERENCES` relationships.
@@ -26,8 +26,9 @@ export async function searchArticles(req, res, next) {
     });
 
     res.json({
-      source: 'neo4j',
-      ...data,
+      code: 200,
+      message: 'Search articles graph completed successfully',
+      data,
     });
   } catch (err) {
     next(err);

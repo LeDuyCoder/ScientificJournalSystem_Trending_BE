@@ -42,17 +42,14 @@ export const parseCookies = (cookieHeader = '') => {
 export const extractAccessTokenFromRequest = (req) => {
   const cookies = parseCookies(req.headers?.cookie || '');
   if (cookies.access_token) {
-    console.log('[AUTH_DEBUG] Found access_token in cookies');
     return cookies.access_token;
   }
 
   const authHeader = req.headers?.authorization || req.headers?.Authorization;
   if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    console.log('[AUTH_DEBUG] Found access_token in Authorization header');
     return authHeader.slice('Bearer '.length).trim();
   }
 
-  console.log('[AUTH_ERROR] No token found in cookies or headers');
   return null;
 };
 
@@ -60,13 +57,11 @@ export const verifyJwtToken = (token) => {
   const secret = process.env.JWT_SECRET || 'scientific_journal_secret_key';
 
   if (!token) {
-    console.log('[AUTH_ERROR] Token is missing');
     throw new AuthRequiredError();
   }
 
   const parts = token.split('.');
   if (parts.length !== 3) {
-    console.log('[AUTH_ERROR] Token does not have 3 parts');
     throw new AuthRequiredError();
   }
 
@@ -77,13 +72,11 @@ export const verifyJwtToken = (token) => {
   try {
     header = JSON.parse(base64UrlDecode(encodedHeader));
     payload = JSON.parse(base64UrlDecode(encodedPayload));
-  } catch (err) {
-    console.log('[AUTH_ERROR] Failed to parse token JSON:', err.message);
+  } catch {
     throw new AuthRequiredError();
   }
 
   if (header.alg !== 'HS256') {
-    console.log(`[AUTH_ERROR] Unsupported algorithm: ${header.alg}`);
     throw new AuthRequiredError();
   }
 
@@ -101,12 +94,10 @@ export const verifyJwtToken = (token) => {
     signatureBuffer.length !== expectedBuffer.length ||
     !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
   ) {
-    console.log('[AUTH_ERROR] Signature mismatch! Check your JWT_SECRET.');
     throw new AuthRequiredError();
   }
 
   if (payload.exp && Math.floor(Date.now() / 1000) >= Number(payload.exp)) {
-    console.log(`[AUTH_ERROR] Token is expired (exp: ${payload.exp})`);
     throw new AuthRequiredError();
   }
 
