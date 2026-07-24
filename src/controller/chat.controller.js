@@ -131,7 +131,7 @@ export const chatRagSystem = async (req, res) => {
       }
     }
 
-    const result = await chatPipeline(userQuestion, projectId);
+    const result = await chatPipeline(userQuestion, projectId, userId);
 
     if (redisClient?.isOpen && !result.fromFallback) {
       try {

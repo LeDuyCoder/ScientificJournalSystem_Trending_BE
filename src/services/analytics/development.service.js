@@ -40,14 +40,34 @@ export async function getDevelopmentTrends(query = {}) {
 
     const timeframeQuery = parseTimeframe(query.timeframe);
 
-    // 2. Sequential execution of all 5 independent modules to prevent PostgreSQL shared memory exhaustion
-    const modulesStart = Date.now();
-    const publicationTrend = await getPublicationTrendsData(scope, timeframeQuery);
-    const citationMirroring = await getCitationMirroringData(scope, timeframeQuery);
-    const topicEvolution = await getTopicEvolutionData(scope, timeframeQuery);
-    const frontierDetection = await getFrontierDetectionData(scope);
-    const forecastInsights = await getForecastData(scope);
-    logger.info(`[Analytics] Parallel modules execution took ${Date.now() - modulesStart}ms`);
+    const moduleTimeouts = [
+        { name: 'publication', fn: () => getPublicationTrendsData(scope, timeframeQuery), timeout: 30000 },
+        { name: 'citations', fn: () => getCitationMirroringData(scope, timeframeQuery), timeout: 30000 },
+        { name: 'topics', fn: () => getTopicEvolutionData(scope, timeframeQuery), timeout: 30000 },
+        { name: 'frontier', fn: () => getFrontierDetectionData(scope), timeout: 30000 },
+        { name: 'forecast', fn: () => getForecastData(scope), timeout: 15000 }  // Timeout after 15s
+    ];
+
+    const results = {};
+    for (const module of moduleTimeouts) {
+        try {
+            results[module.name] = await Promise.race([
+                module.fn(),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(`${module.name} module timeout`)), module.timeout)
+                )
+            ]);
+        } catch (err) {
+            logger.warn(`[Analytics] ${module.name} module failed:`, err?.message);
+            results[module.name] = module.name === 'forecast' ? [] : null;
+        }
+    }
+
+    const publicationTrend = results.publication;
+    const citationMirroring = results.citations;
+    const topicEvolution = results.topics;
+    const frontierDetection = results.frontier;
+    const forecastInsights = results.forecast;
 
     const responseData = {
       publicationTrend,

@@ -197,6 +197,17 @@ const router = express.Router();
  *       500:
  *         description: Lỗi server.
  */
+import { parseCookies } from '../utils/authToken.utils.js';
+
+router.get('/debug-auth', (req, res) => {
+  res.json({
+    success: true,
+    headers: req.headers,
+    cookies: req.headers.cookie || 'No cookies header',
+    parsedCookies: req.headers.cookie ? parseCookies(req.headers.cookie) : {},
+  });
+});
+
 router.post('/chat', requireAuth, chatRateLimiter, chatRagSystem);
 
 /**

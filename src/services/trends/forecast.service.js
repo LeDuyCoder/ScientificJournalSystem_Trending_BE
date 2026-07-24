@@ -198,36 +198,58 @@ export async function getProjectScope(client, projectId) {
 
 async function fetchYearlyArticleMetrics(client, scope) {
   const params = [];
-  const filters = [];
+  const unionParts = [];
 
   if (scope.subjectCategoryIds.length > 0) {
     params.push(scope.subjectCategoryIds);
-    filters.push(buildSubjectScopeSql(params.length));
+    const idx = params.length;
+    unionParts.push(`
+      SELECT a.article_id
+      FROM "Article" a
+      WHERE a.primary_topic IN (
+        SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($${idx}::bigint[])
+      )
+        AND COALESCE(a.is_deleted, false) = false
+    `);
+    unionParts.push(`
+      SELECT st.article_id
+      FROM "Sub_Topic" st
+      JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
+      WHERE sub_topic.subject_category_id = ANY($${idx}::bigint[])
+    `);
   }
 
   if (scope.keywordIds.length > 0) {
     params.push(scope.keywordIds);
-    filters.push(buildKeywordScopeSql(params.length));
+    const idx = params.length;
+    unionParts.push(`
+      SELECT ka.article_id
+      FROM "Keyword_Article" ka
+      WHERE ka.keyword_id = ANY($${idx}::bigint[])
+    `);
   }
 
-  const scopeFilter = filters.length > 0 ? `(${filters.join(' OR ')})` : 'FALSE';
+  if (unionParts.length === 0) {
+    return fillMissingYears([]);
+  }
 
-  const metricsRes = await client.query(
-    `
+  const query = `
+    WITH target_article_ids AS (
+      ${unionParts.join(' UNION ')}
+    )
     SELECT
       a.publication_year AS year,
       COUNT(DISTINCT a.article_id) AS article_count,
       COALESCE(SUM(COALESCE(a.citation_count, 0)), 0) AS citation_count
-    FROM "Article" a
-    WHERE ${scopeFilter}
-      AND a.publication_year IS NOT NULL
+    FROM target_article_ids tai
+    JOIN "Article" a ON a.article_id = tai.article_id
+    WHERE a.publication_year IS NOT NULL
       AND COALESCE(a.is_deleted, false) = false
     GROUP BY a.publication_year
     ORDER BY a.publication_year ASC
-    `,
-    params
-  );
+  `;
 
+  const metricsRes = await client.query(query, params);
   return fillMissingYears(metricsRes.rows);
 }
 
@@ -235,31 +257,52 @@ async function fetchKeywordYearlyMetrics(client, scope) {
   if (scope.keywordIds.length === 0) return [];
 
   const params = [scope.keywordIds];
-  const filters = [
-    'ka.keyword_id = ANY($1::bigint[])',
-    'a.publication_year IS NOT NULL',
-    'COALESCE(a.is_deleted, false) = false'
-  ];
+  const unionParts = [];
 
   if (scope.subjectCategoryIds.length > 0) {
     params.push(scope.subjectCategoryIds);
-    filters.push(buildSubjectScopeSql(params.length));
+    const idx = params.length;
+    unionParts.push(`
+      SELECT ka.article_id, ka.keyword_id
+      FROM "Keyword_Article" ka
+      JOIN "Article" a ON ka.article_id = a.article_id
+      WHERE ka.keyword_id = ANY($1::bigint[])
+        AND a.primary_topic IN (
+          SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($${idx}::bigint[])
+        )
+        AND COALESCE(a.is_deleted, false) = false
+    `);
+    unionParts.push(`
+      SELECT ka.article_id, ka.keyword_id
+      FROM "Keyword_Article" ka
+      JOIN "Sub_Topic" st ON ka.article_id = st.article_id
+      JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
+      WHERE ka.keyword_id = ANY($1::bigint[])
+        AND sub_topic.subject_category_id = ANY($${idx}::bigint[])
+    `);
+  } else {
+    unionParts.push(`
+      SELECT ka.article_id, ka.keyword_id
+      FROM "Keyword_Article" ka
+      WHERE ka.keyword_id = ANY($1::bigint[])
+    `);
   }
 
-  const keywordMetricsRes = await client.query(
-    `
+  const query = `
+    WITH target_keyword_articles AS (
+      ${unionParts.join(' UNION ')}
+    )
     SELECT
       k.keyword_id,
       k.display_name AS keyword_name,
       a.publication_year AS year,
       COUNT(DISTINCT a.article_id) AS article_count,
       COALESCE(SUM(COALESCE(a.citation_count, 0)), 0) AS citation_count
-    FROM "Keyword_Article" ka
-    JOIN "Keyword" k
-      ON ka.keyword_id = k.keyword_id
-    JOIN "Article" a
-      ON ka.article_id = a.article_id
-    WHERE ${filters.join(' AND ')}
+    FROM target_keyword_articles tka
+    JOIN "Keyword" k ON tka.keyword_id = k.keyword_id
+    JOIN "Article" a ON tka.article_id = a.article_id
+    WHERE a.publication_year IS NOT NULL
+      AND COALESCE(a.is_deleted, false) = false
     GROUP BY
       k.keyword_id,
       k.display_name,
@@ -267,9 +310,9 @@ async function fetchKeywordYearlyMetrics(client, scope) {
     ORDER BY
       k.display_name ASC,
       a.publication_year ASC
-    `,
-    params
-  );
+  `;
+
+  const keywordMetricsRes = await client.query(query, params);
 
   return keywordMetricsRes.rows.map((row) => ({
     keyword_id: Number(row.keyword_id),
