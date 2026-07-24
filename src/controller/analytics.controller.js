@@ -3,30 +3,30 @@
  */
 import logger from '../utils/logger.js';
 import { z } from 'zod';
-import { getTopEntities } from "../services/analytics.service.js";
-import { getPublicationTrends } from "../services/trends.service.js";
-import { getFrontierTopics } from "../services/frontier.service.js";
-import { getDistribution } from "../services/distribution.service.js";
-import { getForecastInsights } from "../services/forecast.service.js";
-import { getGeoDistribution } from "../services/geoDistribution.service.js";
-import { getImpactQuartiles } from '../services/impactQuartiles.service.js';
-import { getCollaborationNetwork } from '../services/network.service.js';
-import { getJournalQuartileDistribution } from "../services/journal-quartile.service.js";
-import { getJournalRanking } from "../services/journal-ranking.service.js";
-import { getTopicIntensityMatrix } from '../services/matrix.service.js';
-import { getInfluentialRankings } from "../services/rankings.service.js";
-import { getProductivityMatrix } from "../services/productivityMatrix.service.js";
-import { getCountryCollaborationChord } from "../services/countryCollaboration.service.js";
-import { getJournalMigrationAnalysis } from '../services/migration.service.js';
-import { getNetworkTopology } from '../services/topology.service.js';
-import { getKeywordVectors } from '../services/keywordVectors.service.js';
-import { getDashboardSearchSuggestions } from '../services/dashboardSearch.service.js';
+import { getTopEntities } from "../services/dashboard/analytics.service.js";
+import { getPublicationTrends } from "../services/trends/trends.service.js";
+import { getFrontierTopics } from "../services/trends/frontier.service.js";
+import { getDistribution } from "../services/trends/distribution.service.js";
+import { getForecastInsights } from "../services/trends/forecast.service.js";
+import { getGeoDistribution } from "../services/trends/geoDistribution.service.js";
+import { getImpactQuartiles } from '../services/metrics/impactQuartiles.service.js';
+import { getCollaborationNetwork } from '../services/collaboration/network.service.js';
+import { getJournalQuartileDistribution } from "../services/journals/journal-quartile.service.js";
+import { getJournalRanking } from "../services/journals/journal-ranking.service.js";
+import { getTopicIntensityMatrix } from '../services/metrics/matrix.service.js';
+import { getInfluentialRankings } from "../services/metrics/rankings.service.js";
+import { getProductivityMatrix } from "../services/metrics/productivityMatrix.service.js";
+import { getCountryCollaborationChord } from "../services/collaboration/countryCollaboration.service.js";
+import { getJournalMigrationAnalysis } from '../services/journals/migration.service.js';
+import { getNetworkTopology } from '../services/collaboration/topology.service.js';
+import { getKeywordVectors } from '../services/trends/keywordVectors.service.js';
+import { getDashboardSearchSuggestions } from '../services/search/dashboardSearch.service.js';
 import { getDevelopmentTrends } from '../services/analytics/development.service.js';
-import { getImpactMatrixData } from '../services/impactMatrix.service.js';
-import { getCrossLinks } from '../services/crossLinks.service.js';
-import { getTemporalShift } from '../services/temporalShift.service.js';
-import { getCollaborationInsights, getCollaborationMetrics } from '../services/collabInsights.service.js';
-import { getCuratedArticles, getProjectKeywords, getTrackedJournals, addProjectKeyword, removeProjectKeyword } from '../services/curatedArticles.service.js';
+import { getImpactMatrixData } from '../services/metrics/impactMatrix.service.js';
+import { getCrossLinks } from '../services/collaboration/crossLinks.service.js';
+import { getTemporalShift } from '../services/trends/temporalShift.service.js';
+import { getCollaborationInsights, getCollaborationMetrics } from '../services/collaboration/collabInsights.service.js';
+import { getCuratedArticles, getProjectKeywords, getTrackedJournals, addProjectKeyword, removeProjectKeyword } from '../services/journals/curatedArticles.service.js';
 
 
 
@@ -810,7 +810,7 @@ export async function fetchProjectSubjectCategories(req, res, next) {
       search: req.validatedQuery.search,
     };
 
-    const { getProjectSubjectCategories } = await import('../services/analytics.service.js');
+    const { getProjectSubjectCategories } = await import('../services/dashboard/analytics.service.js');
     const data = await getProjectSubjectCategories(filters);
 
     res.json({

@@ -1,4 +1,4 @@
-import { SCHEMA_REGISTRY, BRIDGE_TABLES } from '../services/db_schema_registry.js';
+import { SCHEMA_REGISTRY, BRIDGE_TABLES } from '../services/infrastructure/db_schema_registry.js';
 
 export const cleanGeneratedSql = (rawResponse) => {
     const raw = rawResponse.trim();

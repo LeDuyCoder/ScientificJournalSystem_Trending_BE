@@ -1,4 +1,4 @@
-import { redisGet, redisSet } from '../redis.service.js';
+import { redisGet, redisSet } from '../infrastructure/redis.service.js';
 import logger from '../../utils/logger.js';
 
 /**
@@ -21,18 +21,23 @@ export async function fetchWithCache(cacheKey, ttl, fetchPromiseFn) {
       const isStale = (expiresAt - now) < (SWR_WINDOW * 1000);
 
       if (isStale) {
-        // Trigger background refresh but don't await it
-        fetchPromiseFn().then(async (freshData) => {
-          const payload = {
-            data: freshData,
-            cachedAt: Date.now(),
-            ttl: ttl
-          };
-          await redisSet(cacheKey, JSON.stringify(payload), ttl);
-          logger.info(`[Redis SWR] Background refresh completed for ${cacheKey}`);
-        }).catch(err => {
-          logger.error(`[Redis SWR] Background refresh failed for ${cacheKey}:`, err);
-        });
+        // Trigger background refresh with fire-and-forget pattern
+        // This prevents blocking the current request while refreshing in the background
+        logger.info(`[Redis SWR] Cache near expiry for ${cacheKey}, scheduling background refresh...`);
+        fetchPromiseFn()
+          .then(async (freshData) => {
+            const payload = {
+              data: freshData,
+              cachedAt: Date.now(),
+              ttl: ttl
+            };
+            await redisSet(cacheKey, JSON.stringify(payload), ttl);
+            logger.info(`[Redis SWR] Background refresh completed for ${cacheKey}`);
+          })
+          .catch(err => {
+            logger.error(`[Redis SWR] Background refresh failed for ${cacheKey}:`, err?.message || err);
+          });
+        // Return stale data immediately without waiting for refresh
       }
 
       logger.info(`[Redis] Cache hit for ${cacheKey}`);

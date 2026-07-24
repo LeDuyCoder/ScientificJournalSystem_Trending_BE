@@ -1,4 +1,4 @@
-import { getForecastInsights } from '../forecast.service.js';
+import { getForecastInsights } from '../trends/forecast.service.js';
 import { fetchWithCache } from './cache.service.js';
 import logger from '../../utils/logger.js';
 

@@ -5,8 +5,6 @@ import dashboardRoutes from './dashboard.routes.js';
 import searchRoutes from './search.routes.js';
 import chatRoutes from './chat.routes.js';
 
-import { requireAuth } from '../middlewares/auth.middleware.js';
-import { requireProjectAccess } from '../middlewares/projectAccess.middleware.js';
 
 const router = Router();
 

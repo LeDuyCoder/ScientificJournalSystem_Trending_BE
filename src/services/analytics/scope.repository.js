@@ -1,6 +1,6 @@
 import pool from '../../config/database.js';
 import { fetchWithCache } from './cache.service.js';
-import { getProjectScope } from '../forecast.service.js';
+import { getProjectScope } from '../trends/forecast.service.js';
 import logger from '../../utils/logger.js';
 
 /**
