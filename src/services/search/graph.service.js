@@ -1,5 +1,6 @@
 import { neo4jDriver } from '../../config/neo4j.js';
 import { redisGet, redisSet } from '../infrastructure/redis.service.js';
+import logger from '../../utils/logger.js';
 
 export async function searchArticlesByKeyword(keyword, options = {}) {
   const driver = neo4jDriver;
