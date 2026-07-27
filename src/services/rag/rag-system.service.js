@@ -59,11 +59,18 @@ const buildResponseTable = (rows, routeDecision) => {
     if (!rows || rows.length === 0) return null;
 
     const route = routeDecision?.route || '';
-    const isArticleRoute = route === 'ARTICLE_SQL' || rows.some(row => row.article_id || row.title);
+    const isArticleRoute = route === 'ARTICLE_SQL' || rows.some(row => row.article_id && row.title);
     const isRankingRoute = route === 'RANKING_SQL' || rows.some(row => row.value_txt || row.metric_name);
+    const isStatsRoute = route === 'STATS_SQL' || rows.some(row => row.count !== undefined || row.total !== undefined || row.avg !== undefined);
 
     let columns = [];
-    if (isArticleRoute) {
+    if (isStatsRoute) {
+        // Auto-detect columns from aggregated rows
+        columns = Object.keys(rows[0]).slice(0, 8).map(key => ({
+            key: key,
+            label: key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')
+        }));
+    } else if (isArticleRoute) {
         columns = [
             { key: 'article_id', label: 'ID' },
             { key: 'title', label: 'Tiêu đề' },
@@ -180,7 +187,14 @@ const callOllamaFallback = async (prompt) => {
         }
         const data = await response.json();
         logger.info(`[AI CLIENT FALLBACK] Local Ollama phản hồi thành công.`);
-        return (data.response || '').trim();
+        const promptTokens = data.prompt_eval_count || 0;
+        const completionTokens = data.eval_count || 0;
+        return {
+            text: (data.response || '').trim(),
+            promptTokens,
+            completionTokens,
+            totalTokens: promptTokens + completionTokens
+        };
     } catch (e) {
         logger.error(`[AI CLIENT FALLBACK LỖI] Cả local Ollama fallback cũng thất bại:`, e);
         throw e;
@@ -247,15 +261,33 @@ export const callAiLlm = async (prompt) => {
 
         const data = await response.json();
         let resultText = '';
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let totalTokens = 0;
+
         if (AI_PROVIDER === 'openai') {
             resultText = data.choices?.[0]?.message?.content || '';
+            promptTokens = data.usage?.prompt_tokens || 0;
+            completionTokens = data.usage?.completion_tokens || 0;
+            totalTokens = data.usage?.total_tokens || 0;
         } else if (AI_PROVIDER === 'gemini') {
             resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            promptTokens = data.usageMetadata?.promptTokenCount || 0;
+            completionTokens = data.usageMetadata?.candidatesTokenCount || 0;
+            totalTokens = data.usageMetadata?.totalTokenCount || 0;
         } else {
             resultText = data.response || '';
+            promptTokens = data.prompt_eval_count || 0;
+            completionTokens = data.eval_count || 0;
+            totalTokens = promptTokens + completionTokens;
         }
 
-        return resultText.trim();
+        return {
+            text: resultText.trim(),
+            promptTokens,
+            completionTokens,
+            totalTokens
+        };
     } catch (error) {
         if (error.name === 'AbortError') {
             throw new Error(`Lỗi kết nối AI: Hết hạn (${Math.round(AI_TIMEOUT_MS / 1000)}s)`);
@@ -267,25 +299,44 @@ export const callAiLlm = async (prompt) => {
 export const routeQuestion = async (userQuestion) => {
     const prompt = buildRouterPrompt(userQuestion);
     try {
-        const rawResponse = await callAiLlm(prompt);
+        const { text: rawResponse, promptTokens, completionTokens, totalTokens } = await callAiLlm(prompt);
         const startIdx = rawResponse.indexOf('{');
         const endIdx = rawResponse.lastIndexOf('}');
+        
+        let parsedRoute = {
+            route: 'VECTOR_RAG',
+            primary_entity: 'Article',
+            intent_type: 'fallback',
+            required_tables: ['Article'],
+            reason: 'Fallback due to parse failure'
+        };
 
         if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-            const jsonStr = rawResponse.slice(startIdx, endIdx + 1);
-            return JSON.parse(jsonStr);
+            try {
+                const jsonStr = rawResponse.slice(startIdx, endIdx + 1);
+                parsedRoute = JSON.parse(jsonStr);
+            } catch (error) {
+                logger.error(`[DEBUG ROUTER] JSON parse error:`, error);
+            }
         }
-    } catch (error) {
-        logger.error(`[DEBUG ROUTER] JSON parse error:`, error);
-    }
 
-    return {
-        route: 'VECTOR_RAG',
-        primary_entity: 'Article',
-        intent_type: 'fallback',
-        required_tables: ['Article'],
-        reason: 'Fallback due to parse failure'
-    };
+        return {
+            routeDecision: parsedRoute,
+            tokens: { promptTokens, completionTokens, totalTokens }
+        };
+    } catch (error) {
+        logger.error(`[DEBUG ROUTER] Router error:`, error);
+        return {
+            routeDecision: {
+                route: 'VECTOR_RAG',
+                primary_entity: 'Article',
+                intent_type: 'fallback',
+                required_tables: ['Article'],
+                reason: 'Fallback due to router failure: ' + error.message
+            },
+            tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        };
+    }
 };
 
 const buildEmbeddingVector = async (text) => {
@@ -355,9 +406,16 @@ User query: ${userQuestion}
 English search terms:`.trim();
 
     try {
-        return await callAiLlm(prompt);
+        const { text, promptTokens, completionTokens, totalTokens } = await callAiLlm(prompt);
+        return {
+            englishQuery: text,
+            tokens: { promptTokens, completionTokens, totalTokens }
+        };
     } catch (e) {
-        return userQuestion;
+        return {
+            englishQuery: userQuestion,
+            tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        };
     }
 };
 
@@ -459,12 +517,14 @@ const executeRankingSqlTemplate = async (scope, userQuestion) => {
     };
 };
 
-export const executeEntitySql = async (userQuestion, routeDecision, scope) => {
-    const prompt = buildSqlPrompt(userQuestion, routeDecision, scope);
+const runEntitySqlOnce = async (userQuestion, routeDecision, scope, repairContext = null) => {
+    const prompt = buildSqlPrompt(userQuestion, routeDecision, scope, repairContext);
     let generatedSql = "";
-
+    let tokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
-        const rawResponse = await callAiLlm(prompt);
+        const res = await callAiLlm(prompt);
+        const rawResponse = res.text;
+        tokens = res.tokens;
         let rawSql = "";
         const jsonStart = rawResponse.indexOf('{');
         const jsonEnd = rawResponse.lastIndexOf('}');
@@ -483,11 +543,9 @@ export const executeEntitySql = async (userQuestion, routeDecision, scope) => {
             const categoriesSql = scope.subjectCategoryIds.length > 0
                 ? `ARRAY[${scope.subjectCategoryIds.join(', ')}]::bigint[]`
                 : `ARRAY[]::bigint[]`;
-
             const keywordsSql = scope.keywordIds.length > 0
                 ? `ARRAY[${scope.keywordIds.join(', ')}]::bigint[]`
                 : `ARRAY[]::bigint[]`;
-
             rawSql = rawSql
                 .replace(/__PROJECT_SUBJECT_CATEGORIES__/g, categoriesSql)
                 .replace(/__PROJECT_KEYWORD_IDS__/g, keywordsSql);
@@ -498,27 +556,79 @@ export const executeEntitySql = async (userQuestion, routeDecision, scope) => {
 
         logger.db(`[DEBUG SQL] Executing Query: ${generatedSql}`);
         const dbResult = await pool.query(generatedSql);
+        return { sql: generatedSql, rows: dbResult.rows, tokens };
+    } catch (err) {
+        err.sql = generatedSql;
+        err.tokens = tokens;
+        throw err;
+    }
+};
 
-        return {
-            type: routeDecision.route,
-            sql: generatedSql,
-            rows: dbResult.rows,
-            error: null
-        };
+export const executeEntitySql = async (userQuestion, routeDecision, scope) => {
+    let lastSql = "";
+    let lastError = null;
+    let accumulatedTokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+    // First attempt
+    try {
+        const { sql, rows, tokens } = await runEntitySqlOnce(userQuestion, routeDecision, scope);
+        if (tokens) {
+            accumulatedTokens.promptTokens += tokens.promptTokens;
+            accumulatedTokens.completionTokens += tokens.completionTokens;
+            accumulatedTokens.totalTokens += tokens.totalTokens;
+        }
+        return { type: routeDecision.route, sql, rows, error: null, tokens: accumulatedTokens };
     } catch (error) {
-        logger.error(`[DEBUG LỖI] Vấn đề tại TEXT TO SQL:`, error);
+        lastSql = error.sql || lastSql;
+        lastError = error.message || String(error);
+        if (error.tokens) {
+            accumulatedTokens.promptTokens += error.tokens.promptTokens;
+            accumulatedTokens.completionTokens += error.tokens.completionTokens;
+            accumulatedTokens.totalTokens += error.tokens.totalTokens;
+        }
+        logger.warn(`[SQL RETRY] First attempt failed: ${lastError}. Trying self-repair...`);
+    }
+
+    // Second attempt: feed the error back to AI so it can auto-fix
+    try {
+        const { sql, rows, tokens } = await runEntitySqlOnce(userQuestion, routeDecision, scope, {
+            sql: lastSql,
+            error: lastError
+        });
+        if (tokens) {
+            accumulatedTokens.promptTokens += tokens.promptTokens;
+            accumulatedTokens.completionTokens += tokens.completionTokens;
+            accumulatedTokens.totalTokens += tokens.totalTokens;
+        }
+        logger.info(`[SQL RETRY] Self-repair succeeded.`);
+        return { type: routeDecision.route, sql, rows, error: null, tokens: accumulatedTokens };
+    } catch (error) {
+        logger.error(`[DEBUG Lỗi] SQL self-repair also failed:`, error);
+        if (error.tokens) {
+            accumulatedTokens.promptTokens += error.tokens.promptTokens;
+            accumulatedTokens.completionTokens += error.tokens.completionTokens;
+            accumulatedTokens.totalTokens += error.tokens.totalTokens;
+        }
         return {
             type: routeDecision.route,
-            sql: generatedSql,
+            sql: lastSql,
             rows: [],
-            error: error.message
+            error: error.message || String(error),
+            tokens: accumulatedTokens
         };
     }
 };
 
 export const executeVectorRag = async (userQuestion, routeDecision, scope) => {
+    let accumulatedTokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
-        const englishQuery = await translateToEnglishQuery(userQuestion);
+        const { englishQuery, tokens: translateTokens } = await translateToEnglishQuery(userQuestion);
+        if (translateTokens) {
+            accumulatedTokens.promptTokens += translateTokens.promptTokens;
+            accumulatedTokens.completionTokens += translateTokens.completionTokens;
+            accumulatedTokens.totalTokens += translateTokens.totalTokens;
+        }
+
         const queryEmbedding = await buildEmbeddingVector(englishQuery);
         const vectorStr = `[${queryEmbedding.join(',')}]`;
 
@@ -550,8 +660,8 @@ export const executeVectorRag = async (userQuestion, routeDecision, scope) => {
                     (1 - (a.embedding <=> $1::vector))::double precision AS similarity
                 FROM "Article" AS a
                 LEFT JOIN "Issue" AS i ON a.issue_id = i.issue_id
-                LEFT JOIN "Volume" AS v ON i.volume_id = v.volume_id
-                LEFT JOIN "Journal" AS j ON v.journal_id = j.journal_id
+                LEFT JOIN "Volume" AS v ON v.volume_id = i.volume_id
+                LEFT JOIN "Journal" AS j ON j.journal_id = v.journal_id
                 WHERE COALESCE(a.is_deleted, false) = false
                   AND a.embedding IS NOT NULL
                   AND (1 - (a.embedding <=> $1::vector)) >= $2
@@ -573,15 +683,17 @@ export const executeVectorRag = async (userQuestion, routeDecision, scope) => {
             type: "VECTOR_RAG",
             sql: `SELECT * FROM "Article" a WHERE a.embedding IS NOT NULL AND (1 - (a.embedding <=> query_vector)) >= ${usedThreshold} ${finalScopeFilter} ORDER BY a.embedding <=> query_vector LIMIT 5;`,
             rows: rows,
-            error: null
+            error: null,
+            tokens: accumulatedTokens
         };
     } catch (error) {
-        logger.error(`[DEBUG LỖI] Vấn đề tại VECTOR RAG:`, error);
+        logger.error(`[DEBUG Lỗi] Vấn đề tại VECTOR RAG:`, error);
         return {
             type: "VECTOR_RAG",
             sql: "",
             rows: [],
-            error: error.message
+            error: error.message || String(error),
+            tokens: accumulatedTokens
         };
     }
 };
@@ -619,12 +731,22 @@ const buildSmartMarkdownFallback = (userQuestion, rows, routeDecision) => {
     }
 
     const route = routeDecision?.route || '';
-    const isArticleRoute = route === 'ARTICLE_SQL' || rows.some(row => row.article_id || row.title);
-    const isRankingRoute = route === 'RANKING_SQL' || rows.some(row => row.value_txt || row.metric_name);
+    const isStatsRoute = route === 'STATS_SQL' || rows.some(row => row.count !== undefined || row.total !== undefined || row.avg !== undefined);
+    const isArticleRoute = !isStatsRoute && (route === 'ARTICLE_SQL' || rows.some(row => row.article_id && row.title));
+    const isRankingRoute = !isStatsRoute && (route === 'RANKING_SQL' || rows.some(row => row.value_txt || row.metric_name));
     
     let md = `${intro}\n\n`;
 
-    if (isArticleRoute) {
+    if (isStatsRoute) {
+        // Render as markdown table for aggregated statistics
+        const keys = Object.keys(rows[0]);
+        const headerLabels = keys.map(k => k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' '));
+        md += '| ' + headerLabels.join(' | ') + ' |\n';
+        md += '| ' + keys.map(() => '---').join(' | ') + ' |\n';
+        rows.forEach(row => {
+            md += '| ' + keys.map(k => row[k] !== null && row[k] !== undefined ? String(row[k]) : 'N/A').join(' | ') + ' |\n';
+        });
+    } else if (isArticleRoute) {
         rows.forEach((row, i) => {
             const title = row.title || 'N/A';
             const author = row.authors || 'N/A';
@@ -658,26 +780,32 @@ const buildSmartMarkdownFallback = (userQuestion, rows, routeDecision) => {
 };
 
 export const generateFinalAnswer = async (userQuestion, routeDecision, toolResult, scope) => {
+    let tokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     if (toolResult.error) {
-        return { answer: `⚠️ Hệ thống gặp lỗi truy vấn: ${toolResult.error}`, fromFallback: true };
+        return { 
+            answer: `Rất tiếc, hệ thống đang gặp chút khó khăn khi truy xuất dữ liệu phân tích này. Vui lòng thử diễn đạt lại câu hỏi rõ ràng hơn nhé!`, 
+            fromFallback: true,
+            tokens
+        };
     }
 
     if (!toolResult.rows || toolResult.rows.length === 0) {
-        return { answer: 'Hiện tại CSDL chưa tìm thấy dữ liệu phù hợp với yêu cầu này.', fromFallback: false };
+        return { answer: 'Hiện tại CSDL chưa tìm thấy dữ liệu phù hợp với yêu cầu này.', fromFallback: false, tokens };
     }
 
     const prompt = buildFinalAnswerPrompt(userQuestion, routeDecision, toolResult.rows, scope);
     try {
-        const answer = await callAiLlm(prompt);
-        return { answer, fromFallback: false };
+        const res = await callAiLlm(prompt);
+        return { answer: res.text, fromFallback: false, tokens: res.tokens };
     } catch (llmError) {
-        logger.error(`[DEBUG LỖI] Lỗi sinh câu trả lời từ AI (sử dụng Smart Fallback):`, llmError);
+        logger.error(`[DEBUG Lỗi] Lỗi sinh câu trả lời từ AI (sử dụng Smart Fallback):`, llmError);
         const answer = buildSmartMarkdownFallback(userQuestion, toolResult.rows, routeDecision);
-        return { answer, fromFallback: true };
+        return { answer, fromFallback: true, tokens };
     }
 };
 
 export const chatPipeline = async (userQuestion, projectId, userId = null) => {
+    let accumulatedTokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     logger.info(`[DEBUG] Loading project scope for project ${projectId}`);
     const scope = await getProjectScope(pool, projectId);
 
@@ -693,20 +821,59 @@ export const chatPipeline = async (userQuestion, projectId, userId = null) => {
             toolResult: { type: 'OUT_OF_SCOPE', sql: '', rows: [], error: null },
             answer: buildOutOfScopeAnswer(userQuestion),
             fromFallback: false,
-            table: null
+            table: null,
+            tokens: accumulatedTokens
         };
     }
 
+    // ---------- LOCAL GREETING DETECTION (saves 1 API call) ----------
+    const greetingPattern = /^\s*(xin chào|chào|hello|hi|hey|bạn là ai|bạn là gì|hệ thống này là gì|giới thiệu|bạn có thể làm gì|bạn làm được gì|what can you do|who are you|what is this|introduce yourself|help me|hướng dẫn|cách sử dụng)\b/i;
+    if (greetingPattern.test(userQuestion)) {
+        const lang = detectUserLanguage(userQuestion);
+        let greetingAnswer;
+        if (lang === 'vi' || lang === 'ja') {
+            greetingAnswer = `Xin chào! 👋 Tôi là **trợ lý phân tích dữ liệu** của hệ thống **Scientific Journal Trending System**.\n\n` +
+                `Hệ thống này giúp bạn:\n` +
+                `- 📊 **Phân tích & thống kê** dữ liệu xuất bản khoa học (số lượng bài báo theo năm, khu vực, lĩnh vực...)\n` +
+                `- 🔍 **Tìm kiếm bài báo** theo chủ đề, tác giả, DOI, từ khóa\n` +
+                `- 🏆 **Xếp hạng tạp chí** theo Quartile (Q1-Q4), SJR, H-Index\n` +
+                `- 👤 **Tra cứu tác giả**, tổ chức nghiên cứu\n` +
+                `- 📈 **Dự báo xu hướng** phát triển nghiên cứu\n\n` +
+                `Hãy đặt câu hỏi cụ thể, ví dụ: *"Thống kê số bài báo theo từng năm"* hoặc *"Top tạp chí Q1 năm 2024"*.`;
+        } else {
+            greetingAnswer = `Hello! 👋 I'm the **data analysis assistant** of the **Scientific Journal Trending System**.\n\n` +
+                `This system helps you:\n` +
+                `- 📊 **Analyze & aggregate** scientific publication data (article counts by year, region, field...)\n` +
+                `- 🔍 **Search articles** by topic, author, DOI, keywords\n` +
+                `- 🏆 **Journal rankings** by Quartile (Q1-Q4), SJR, H-Index\n` +
+                `- 👤 **Look up authors** and research institutions\n` +
+                `- 📈 **Forecast research trends**\n\n` +
+                `Ask a specific question, e.g. *"How many articles were published each year?"* or *"Top Q1 journals in 2024"*.`;
+        }
+        return {
+            routeDecision: { route: 'GREETING_INTRO', primary_entity: null, intent_type: 'greeting', required_tables: [], reason: 'Local greeting detection' },
+            toolResult: { type: 'GREETING_INTRO', sql: '', rows: [], error: null },
+            answer: greetingAnswer,
+            fromFallback: false,
+            table: null,
+            tokens: accumulatedTokens
+        };
+    }
+
+    // ---------- HISTORY CONTEXT (optimized: max 3 msgs, truncated to 100 chars) ----------
     let summaryHistory = '';
     if (userId) {
         try {
-            const historyMessages = await getProjectChatMessages(projectId, userId, { limit: 5, order: 'desc' });
+            const historyMessages = await getProjectChatMessages(projectId, userId, { limit: 3, order: 'desc' });
             if (historyMessages && historyMessages.length > 0) {
                 summaryHistory = historyMessages
                     .reverse()
-                    .map(m => `${m.role}: ${m.content}`)
+                    .map(m => {
+                        const content = String(m.content || '').substring(0, 100);
+                        return `${m.role}: ${content}`;
+                    })
                     .join(' | ');
-                logger.info(`[CHAT HISTORY] Loaded ${historyMessages.length} messages context.`);
+                logger.info(`[CHAT HISTORY] Loaded ${historyMessages.length} messages context (truncated).`);
             }
         } catch (e) {
             logger.warn(`[CHAT HISTORY] Failed to retrieve history context: ${e.message}`);
@@ -714,13 +881,46 @@ export const chatPipeline = async (userQuestion, projectId, userId = null) => {
     }
 
     const modifiedUserQuestion = summaryHistory 
-        ? `[Conversation context: ${summaryHistory}] Current Question: ${userQuestion}`
+        ? `[Context: ${summaryHistory}] Question: ${userQuestion}`
         : userQuestion;
 
     logger.info(`[DEBUG] Routing question: "${userQuestion}"`);
-    const routeDecision = await routeQuestion(modifiedUserQuestion);
+    const { routeDecision, tokens: routeTokens } = await routeQuestion(userQuestion);
+    if (routeTokens) {
+        accumulatedTokens.promptTokens += routeTokens.promptTokens;
+        accumulatedTokens.completionTokens += routeTokens.completionTokens;
+        accumulatedTokens.totalTokens += routeTokens.totalTokens;
+    }
 
     const route = routeDecision.route;
+
+    // ---------- GREETING from AI router (fallback if local regex missed) ----------
+    if (route === "GREETING_INTRO") {
+        const lang = detectUserLanguage(userQuestion);
+        let greetingAnswer;
+        if (lang === 'vi' || lang === 'ja') {
+            greetingAnswer = `Xin chào! 👋 Tôi là **trợ lý phân tích dữ liệu** của hệ thống **Scientific Journal Trending System**.\n\n` +
+                `Hệ thống này giúp bạn:\n` +
+                `- 📊 **Phân tích & thống kê** dữ liệu xuất bản khoa học\n` +
+                `- 🔍 **Tìm kiếm bài báo** theo chủ đề, tác giả, DOI\n` +
+                `- 🏆 **Xếp hạng tạp chí** theo Quartile, SJR, H-Index\n` +
+                `- 👤 **Tra cứu tác giả**, tổ chức nghiên cứu\n` +
+                `- 📈 **Dự báo xu hướng** phát triển nghiên cứu\n\n` +
+                `Hãy đặt câu hỏi cụ thể, ví dụ: *"Thống kê số bài báo theo từng năm"*.`;
+        } else {
+            greetingAnswer = `Hello! 👋 I'm the **data analysis assistant** of the **Scientific Journal Trending System**.\n\n` +
+                `This system helps you analyze scientific publication data, search articles, rank journals, and forecast trends.\n\n` +
+                `Ask a specific question, e.g. *"How many articles were published each year?"*.`;
+        }
+        return {
+            routeDecision,
+            toolResult: { type: 'GREETING_INTRO', sql: '', rows: [], error: null },
+            answer: greetingAnswer,
+            fromFallback: false,
+            table: null,
+            tokens: accumulatedTokens
+        };
+    }
 
     if (route === "CLARIFY") {
         return {
@@ -728,34 +928,40 @@ export const chatPipeline = async (userQuestion, projectId, userId = null) => {
             toolResult: { type: "CLARIFY", sql: "", rows: [], error: null },
             answer: "Câu hỏi của bạn chưa rõ ràng. Bạn có thể nói rõ hơn bạn muốn tìm theo bài báo, tạp chí, tác giả hay rankings không?",
             fromFallback: false,
-            table: null
+            table: null,
+            tokens: accumulatedTokens
         };
     }
 
+    // ---------- TOOL ROUTING (clean, no force-template) ----------
     let toolResult;
-    const hasArticleTerm = /bài báo|article|paper|publication/i.test(userQuestion);
-    const hasCitationIntent = /citation|cite|cited|trích dẫn|luợt trích dẫn|lượt trích dẫn/i.test(userQuestion);
-    const hasTopIntent = /cao nhất|nhiều nhất|top|highest|most|maximum|max|lớn nhất/i.test(userQuestion);
-    const hasStructuredArticleIntent = hasArticleTerm && (
-        /\bdoi\b/i.test(userQuestion)
-        || /\b(19|20)\d{2}\b/.test(userQuestion)
-        || /đếm|bao nhiêu|thống kê|publication year|năm xuất bản|số lượng/i.test(userQuestion)
-        || (hasCitationIntent && hasTopIntent)
-    );
 
-    const isArticleSqlOnlyRequest = route === "ARTICLE_SQL" || hasStructuredArticleIntent;
-
-    if (route === "VECTOR_RAG" || (route === "ARTICLE_SQL" && !isArticleSqlOnlyRequest)) {
+    if (route === "VECTOR_RAG") {
         toolResult = await executeVectorRag(modifiedUserQuestion, routeDecision, scope);
-    } else if (isArticleSqlOnlyRequest) {
+    } else if (route === "ARTICLE_SQL") {
+        // Only use article template when AI explicitly routes here for listing
         toolResult = await executeArticleSqlTemplate(scope);
     } else if (route === "RANKING_SQL") {
         toolResult = await executeRankingSqlTemplate(scope, modifiedUserQuestion);
     } else {
+        // STATS_SQL, JOURNAL_SQL, AUTHOR_SQL, PUBLISHER_SQL, SUBJECT_SQL, TOPIC_SQL, KEYWORD_SQL, INSTITUTION_SQL
+        // All go through dynamic text-to-SQL (supports GROUP BY for stats)
         toolResult = await executeEntitySql(modifiedUserQuestion, routeDecision, scope);
     }
 
-    const { answer, fromFallback } = await generateFinalAnswer(modifiedUserQuestion, routeDecision, toolResult, scope);
+    if (toolResult && toolResult.tokens) {
+        accumulatedTokens.promptTokens += toolResult.tokens.promptTokens;
+        accumulatedTokens.completionTokens += toolResult.tokens.completionTokens;
+        accumulatedTokens.totalTokens += toolResult.tokens.totalTokens;
+    }
+
+    const { answer, fromFallback, tokens: finalAnswerTokens } = await generateFinalAnswer(modifiedUserQuestion, routeDecision, toolResult, scope);
+    if (finalAnswerTokens) {
+        accumulatedTokens.promptTokens += finalAnswerTokens.promptTokens;
+        accumulatedTokens.completionTokens += finalAnswerTokens.completionTokens;
+        accumulatedTokens.totalTokens += finalAnswerTokens.totalTokens;
+    }
+
     const table = buildResponseTable(toolResult.rows, routeDecision);
 
     return {
@@ -763,6 +969,7 @@ export const chatPipeline = async (userQuestion, projectId, userId = null) => {
         toolResult,
         answer,
         fromFallback,
-        table
+        table,
+        tokens: accumulatedTokens
     };
 };

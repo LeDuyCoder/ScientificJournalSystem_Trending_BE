@@ -42,7 +42,7 @@ const saveChatMessageSafely = async (payload) => {
   try {
     return await createChatMessage(payload);
   } catch (error) {
-    logger.warn('[CHAT HISTORY] Không th? luu l?ch s? chat:', error?.message || error);
+    logger.warn('[CHAT HISTORY] Khï¿½ng th? luu l?ch s? chat:', error?.message || error);
     return null;
   }
 };
@@ -80,7 +80,7 @@ export const chatRagSystem = async (req, res) => {
   if (!userId) {
     return res.status(401).json({
       success: false,
-      message: 'Vui lòng dang nh?p d? ti?p t?c.'
+      message: 'Vui lï¿½ng dang nh?p d? ti?p t?c.'
     });
   }
 
@@ -90,7 +90,7 @@ export const chatRagSystem = async (req, res) => {
     const userQuestion = requestBody.message;
     const cacheKey = buildChatCacheKey(projectId, userQuestion);
 
-    logger.info(`[CHAT API] Nh?n yêu c?u: ${userQuestion} (Project ID: ${projectId}, User ID: ${userId})`);
+    logger.info(`[CHAT API] Nh?n yï¿½u c?u: ${userQuestion} (Project ID: ${projectId}, User ID: ${userId})`);
 
     userMessage = await saveChatMessageSafely({
       projectId,
@@ -127,7 +127,7 @@ export const chatRagSystem = async (req, res) => {
         }
         logger.info(`[CHAT CACHE] Cache miss cho Project ID: ${projectId}, Key: ${cacheKey}`);
       } catch (cacheError) {
-        logger.warn('[CHAT CACHE] Không th? d?c cache Redis, ti?p t?c x? lý pipeline:', cacheError?.message || cacheError);
+        logger.warn('[CHAT CACHE] Khï¿½ng th? d?c cache Redis, ti?p t?c x? lï¿½ pipeline:', cacheError?.message || cacheError);
       }
     }
 
@@ -136,12 +136,12 @@ export const chatRagSystem = async (req, res) => {
     if (redisClient?.isOpen && !result.fromFallback) {
       try {
         await redisSet(cacheKey, JSON.stringify(result), CHAT_CACHE_TTL_SECONDS);
-        logger.info(`[CHAT CACHE] Ðã luu cache cho Project ID: ${projectId}, Key: ${cacheKey}`);
+        logger.info(`[CHAT CACHE] ï¿½ï¿½ luu cache cho Project ID: ${projectId}, Key: ${cacheKey}`);
       } catch (cacheError) {
-        logger.warn('[CHAT CACHE] Không th? luu cache Redis:', cacheError?.message || cacheError);
+        logger.warn('[CHAT CACHE] Khï¿½ng th? luu cache Redis:', cacheError?.message || cacheError);
       }
     } else if (result.fromFallback) {
-      logger.info('[CHAT CACHE] B? qua luu cache vì AI dùng Smart Fallback (k?t qu? có th? chua t?i uu).');
+      logger.info('[CHAT CACHE] B? qua luu cache vï¿½ AI dï¿½ng Smart Fallback (k?t qu? cï¿½ th? chua t?i uu).');
     }
 
     const assistantMessage = await saveChatMessageSafely({
@@ -150,6 +150,9 @@ export const chatRagSystem = async (req, res) => {
       role: 'ASSISTANT',
       content: result.answer,
       model: getActiveChatModel(),
+      promptTokens: result.tokens?.promptTokens || 0,
+      completionTokens: result.tokens?.completionTokens || 0,
+      totalTokens: result.tokens?.totalTokens || 0,
       latencyMs: Date.now() - startedAt,
       status: result.fromFallback ? 'ERROR' : 'COMPLETED'
     });
@@ -163,13 +166,13 @@ export const chatRagSystem = async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error('[CHAT API] L?i x? lý yêu c?u Chatbot:', error);
+    logger.error('[CHAT API] L?i x? lï¿½ yï¿½u c?u Chatbot:', error);
 
     await saveChatMessageSafely({
       projectId,
       userId,
       role: 'ASSISTANT',
-      content: 'Ðã x?y ra l?i h? th?ng, vui lòng th? l?i sau.',
+      content: 'ï¿½ï¿½ x?y ra l?i h? th?ng, vui lï¿½ng th? l?i sau.',
       model: getActiveChatModel(),
       latencyMs: Date.now() - startedAt,
       status: 'ERROR'
@@ -177,7 +180,7 @@ export const chatRagSystem = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: 'Ðã x?y ra l?i h? th?ng, vui lòng th? l?i sau.'
+      message: 'ï¿½ï¿½ x?y ra l?i h? th?ng, vui lï¿½ng th? l?i sau.'
     });
   }
 };
@@ -207,7 +210,7 @@ export const createChatMessageHandler = async (req, res) => {
     return res.status(201).json({ success: true, data: message });
   } catch (error) {
     logger.error('[CHAT MESSAGE] L?i t?o message:', error);
-    return res.status(500).json({ success: false, message: 'Ðã x?y ra l?i khi t?o chat message.' });
+    return res.status(500).json({ success: false, message: 'ï¿½ï¿½ x?y ra l?i khi t?o chat message.' });
   }
 };
 
@@ -229,7 +232,7 @@ export const getChatHistory = async (req, res) => {
     return res.status(200).json({ success: true, data: messages });
   } catch (error) {
     logger.error('[CHAT MESSAGE] L?i l?y l?ch s? chat:', error);
-    return res.status(500).json({ success: false, message: 'Ðã x?y ra l?i khi l?y l?ch s? chat.' });
+    return res.status(500).json({ success: false, message: 'ï¿½ï¿½ x?y ra l?i khi l?y l?ch s? chat.' });
   }
 };
 
@@ -251,7 +254,7 @@ export const getChatMessageDetail = async (req, res) => {
     return res.status(200).json({ success: true, data: message });
   } catch (error) {
     logger.error('[CHAT MESSAGE] L?i l?y chi ti?t message:', error);
-    return res.status(500).json({ success: false, message: 'Ðã x?y ra l?i khi l?y chi ti?t chat message.' });
+    return res.status(500).json({ success: false, message: 'ï¿½ï¿½ x?y ra l?i khi l?y chi ti?t chat message.' });
   }
 };
 
@@ -273,7 +276,7 @@ export const updateChatMessageHandler = async (req, res) => {
     return res.status(200).json({ success: true, data: message });
   } catch (error) {
     logger.error('[CHAT MESSAGE] L?i c?p nh?t message:', error);
-    return res.status(500).json({ success: false, message: 'Ðã x?y ra l?i khi c?p nh?t chat message.' });
+    return res.status(500).json({ success: false, message: 'ï¿½ï¿½ x?y ra l?i khi c?p nh?t chat message.' });
   }
 };
 
@@ -290,8 +293,8 @@ export const deleteChatMessageHandler = async (req, res) => {
     const result = await deleteChatMessage(messageId, projectId, userId);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] L?i xóa m?t message:', error);
-    return res.status(500).json({ success: false, message: 'Ðã x?y ra l?i khi xóa chat message.' });
+    logger.error('[CHAT MESSAGE] L?i xï¿½a m?t message:', error);
+    return res.status(500).json({ success: false, message: 'ï¿½ï¿½ x?y ra l?i khi xï¿½a chat message.' });
   }
 };
 
@@ -307,7 +310,7 @@ export const clearChatHistory = async (req, res) => {
     const result = await deleteProjectChatMessages(projectId, userId);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
-    logger.error('[CHAT MESSAGE] L?i xóa l?ch s? chat:', error);
-    return res.status(500).json({ success: false, message: 'Ðã x?y ra l?i khi xóa l?ch s? chat.' });
+    logger.error('[CHAT MESSAGE] L?i xï¿½a l?ch s? chat:', error);
+    return res.status(500).json({ success: false, message: 'ï¿½ï¿½ x?y ra l?i khi xï¿½a l?ch s? chat.' });
   }
 };

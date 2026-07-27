@@ -126,6 +126,14 @@ export const SCHEMA_REGISTRY = {
         "columns": ["issue_id", "volume_id", "issue_number", "publication_year", "is_deleted"],
         "soft_delete": "i.is_deleted = false",
         "description": "Ấn bản phát hành của tạp chí."
+    },
+    "Zone": {
+        "table": "Zone",
+        "alias": "z",
+        "primary_key": "zone_id",
+        "columns": ["zone_id", "code", "name", "type", "iso_code", "source", "created_at"],
+        "soft_delete": null,
+        "description": "Quốc gia hoặc khu vực địa lý quản lý tạp chí."
     }
 };
 
@@ -209,5 +217,8 @@ export const JOIN_GRAPH = {
     "Topic,Subject_Category": `
         JOIN "Subject_Category" AS sc ON sc.subject_category_id = t.subject_category_id
         LEFT JOIN "Subject_Area" AS sa ON sa.subject_area_id = sc.subject_area_id
+    `,
+    "Journal,Zone": `
+        LEFT JOIN "Zone" AS z ON j.region = z.zone_id
     `
 };
