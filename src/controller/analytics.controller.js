@@ -83,11 +83,11 @@ export async function fetchJournalQuartileDistribution(req, res, next) {
     const { project_id, subject_area, keywords, from_year, to_year } = req.validatedQuery;
 
     const data = await getJournalQuartileDistribution({
-      projectId: String(project_id),
-      subjectArea: subject_area ? String(subject_area) : undefined,
+      project_id: String(project_id),
+      subject_area: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear: from_year,
-      toYear: to_year,
+      from_year: from_year,
+      to_year: to_year,
     });
 
     res.status(200).json({
@@ -116,11 +116,11 @@ export async function fetchJournalRanking(req, res, next) {
     const { project_id, subject_area, keywords, from_year, to_year, page, limit } = req.validatedQuery;
 
     const data = await getJournalRanking({
-      projectId: String(project_id),
-      subjectArea: subject_area ? String(subject_area) : undefined,
+      project_id: String(project_id),
+      subject_area: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear: from_year,
-      toYear: to_year,
+      from_year: from_year,
+      to_year: to_year,
       page: page,
       limit: limit,
     });
