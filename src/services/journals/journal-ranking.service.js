@@ -8,7 +8,7 @@ const CACHE_KEY_PREFIX = 'analytics:journal-ranking:v2';
 const CACHE_TTL = 43200; // 12 hours // 1 hour
 
 export async function getJournalRanking(filters) {
-  const { projectId, subjectArea, keywords, fromYear, toYear, page = 1, limit = 10 } = filters;
+  const { project_id: projectId, subject_area: subjectArea, keywords, from_year: fromYear, to_year: toYear, page = 1, limit = 10 } = filters;
 
   const pageNum = Math.max(1, Number(page));
   const limitNum = Math.max(1, Number(limit));
