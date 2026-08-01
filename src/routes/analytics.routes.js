@@ -1051,6 +1051,30 @@ router.get('/network/chord', validateQuery(getCountryCollaborationChordSchema), 
 
 /**
  * @openapi
+ * /analytics/network/chord/export:
+ *   get:
+ *     summary: Export raw country collaboration matrix as CSV
+ *     tags:
+ *       - Analytics
+ *     parameters:
+ *       - in: query
+ *         name: project_id
+ *         schema: { type: string }
+ *         description: ID của project
+ *       - in: query
+ *         name: from_year
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: to_year
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: CSV file generated successfully.
+ */
+router.get('/network/chord/export', validateQuery(getCountryCollaborationChordSchema), exportCountryCollaborationMatrix);
+
+/**
+ * @openapi
  * /analytics/journals/migration:
  *   get:
  *     summary: Get journal migration analysis

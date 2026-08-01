@@ -581,7 +581,6 @@ export async function fetchCountryCollaborationChord(req, res, next) {
 }
 
 /**
-/**
  * Handler for GET /analytics/network/topology
  * Fetches and returns network graph topology (nodes and edges) for conceptual or collaboration networks.
  *
@@ -929,16 +928,21 @@ export async function exportCollaborationReport(req, res, next) {
 
 export async function exportCountryCollaborationMatrix(req, res, next) {
   try {
-    const { project_id } = req.validatedQuery;
     const data = await getCountryCollaborationChord(req.validatedQuery);
     
-    let csv = 'Source,Target,CoAuthorshipValue,Growth\n';
-    data.forEach(row => {
-      csv += `"${row.source}","${row.target}",${row.coAuthorshipValue},"${row.growth}"\n`;
-    });
+    let csv = '\uFEFFSource Country,Target Country,Co-Authorship Count,Growth Rate\n';
+    if (Array.isArray(data) && data.length > 0) {
+      data.forEach(row => {
+        const source = `"${(row.source || '').replace(/"/g, '""')}"`;
+        const target = `"${(row.target || '').replace(/"/g, '""')}"`;
+        const count = row.coAuthorshipValue || 0;
+        const growth = `"${(row.growth || '+0%').replace(/"/g, '""')}"`;
+        csv += `${source},${target},${count},${growth}\n`;
+      });
+    }
     
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=collaboration_matrix.csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="country_collaboration_matrix.csv"');
     return res.status(200).send(csv);
   } catch (err) {
     next(err);
