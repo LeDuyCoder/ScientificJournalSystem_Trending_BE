@@ -86,8 +86,8 @@ export async function fetchJournalQuartileDistribution(request, reply) {
       projectId: project_id ? String(project_id) : undefined,
       subjectArea: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear: from_year,
-      toYear: to_year,
+      from_year: from_year,
+      to_year: to_year,
     });
 
     reply.status(200).send({
@@ -119,8 +119,8 @@ export async function fetchJournalRanking(request, reply) {
       projectId: project_id ? String(project_id) : undefined,
       subjectArea: subject_area ? String(subject_area) : undefined,
       keywords: keywords ? String(keywords) : undefined,
-      fromYear: from_year,
-      toYear: to_year,
+      from_year: from_year,
+      to_year: to_year,
       page: page,
       limit: limit,
     });
@@ -581,7 +581,6 @@ export async function fetchCountryCollaborationChord(request, reply) {
 }
 
 /**
-/**
  * Handler for GET /analytics/network/topology
  * Fetches and returns network graph topology (nodes and edges) for conceptual or collaboration networks.
  *
@@ -932,14 +931,20 @@ export async function exportCountryCollaborationMatrix(request, reply) {
     const { project_id } = request.query;
     const data = await getCountryCollaborationChord(request.query);
     
-    let csv = 'Source,Target,CoAuthorshipValue,Growth\n';
-    data.forEach(row => {
-      csv += `"${row.source}","${row.target}",${row.coAuthorshipValue},"${row.growth}"\n`;
-    });
+    let csv = '\uFEFFSource Country,Target Country,Co-Authorship Count,Growth Rate\n';
+    if (Array.isArray(data) && data.length > 0) {
+      data.forEach(row => {
+        const source = `"${(row.source || '').replace(/"/g, '""')}"`;
+        const target = `"${(row.target || '').replace(/"/g, '""')}"`;
+        const count = row.coAuthorshipValue || 0;
+        const growth = `"${(row.growth || '+0%').replace(/"/g, '""')}"`;
+        csv += `${source},${target},${count},${growth}\n`;
+      });
+    }
     
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=collaboration_matrix.csv');
-    return res.status(200).send(csv);
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', 'attachment; filename="country_collaboration_matrix.csv"');
+    return reply.status(200).send(csv);
   } catch (err) {
     throw err;
   }

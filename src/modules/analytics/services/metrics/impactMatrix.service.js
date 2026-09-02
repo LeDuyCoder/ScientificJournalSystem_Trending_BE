@@ -46,11 +46,12 @@ export async function getImpactMatrixData(query) {
             FROM project_articles_issues
             GROUP BY issue_id
           ),
-          distinct_journals AS (
-            SELECT DISTINCT v.journal_id
+          journal_counts AS (
+            SELECT v.journal_id, SUM(ic.cnt) AS total_articles
             FROM issue_counts ic
             JOIN "Issue" i ON ic.issue_id = i.issue_id
             JOIN "Volume" v ON i.volume_id = v.volume_id
+            GROUP BY v.journal_id
           )
         `;
         params.push(scope.projectCategoryIds);
@@ -79,11 +80,12 @@ export async function getImpactMatrixData(query) {
             FROM project_articles_issues
             GROUP BY issue_id
           ),
-          distinct_journals AS (
-            SELECT DISTINCT v.journal_id
+          journal_counts AS (
+            SELECT v.journal_id, SUM(ic.cnt) AS total_articles
             FROM issue_counts ic
             JOIN "Issue" i ON ic.issue_id = i.issue_id
             JOIN "Volume" v ON i.volume_id = v.volume_id
+            GROUP BY v.journal_id
           )
         `;
         params.push(scope.mappedDomain);
@@ -95,11 +97,12 @@ export async function getImpactMatrixData(query) {
             WHERE coalesce(a.is_deleted, false) = false
             GROUP BY issue_id
           ),
-          distinct_journals AS (
-            SELECT DISTINCT v.journal_id
+          journal_counts AS (
+            SELECT v.journal_id, SUM(ic.cnt) AS total_articles
             FROM issue_counts ic
             JOIN "Issue" i ON ic.issue_id = i.issue_id
             JOIN "Volume" v ON i.volume_id = v.volume_id
+            GROUP BY v.journal_id
           )
         `;
       }
@@ -113,7 +116,7 @@ export async function getImpactMatrixData(query) {
           SELECT jr.journal_id, jr.value_float AS sjr
           FROM "Journal_Ranking" jr
           JOIN "Ranking_Metric" rm ON jr.metric_id = rm.metric_id
-          WHERE jr.journal_id IN (SELECT journal_id FROM distinct_journals)
+          WHERE jr.journal_id IN (SELECT journal_id FROM journal_counts)
             AND rm.code = 'SJR'
             AND jr.year = $${yearIdx}
         ),
@@ -121,7 +124,7 @@ export async function getImpactMatrixData(query) {
           SELECT jr.journal_id, jr.value_int AS h_index
           FROM "Journal_Ranking" jr
           JOIN "Ranking_Metric" rm ON jr.metric_id = rm.metric_id
-          WHERE jr.journal_id IN (SELECT journal_id FROM distinct_journals)
+          WHERE jr.journal_id IN (SELECT journal_id FROM journal_counts)
             AND rm.code = 'H_INDEX'
             AND jr.year = $${yearIdx}
         )
@@ -129,8 +132,9 @@ export async function getImpactMatrixData(query) {
           dj.journal_id,
           j.display_name AS name,
           COALESCE(s.sjr, 0) AS sjr,
-          COALESCE(h.h_index, 0) AS h_index
-        FROM distinct_journals dj
+          COALESCE(h.h_index, 0) AS h_index,
+          dj.total_articles
+        FROM journal_counts dj
         JOIN "Journal" j ON dj.journal_id = j.journal_id
         LEFT JOIN metrics_sjr s ON dj.journal_id = s.journal_id
         LEFT JOIN metrics_hindex h ON dj.journal_id = h.journal_id
@@ -144,7 +148,8 @@ export async function getImpactMatrixData(query) {
         id: r.journal_id,
         name: r.name,
         sjr: Number(r.sjr),
-        h_index: Number(r.h_index)
+        h_index: Number(r.h_index),
+        size: Number(r.total_articles)
       }));
 
       return { items };
