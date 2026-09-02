@@ -1,16 +1,14 @@
-import express from 'express';
-import cors from 'cors';
-import swaggerUi from 'swagger-ui-express';
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { swaggerSpec } from './swagger/swagger.js';
-import indexRoutes from './routes/index.js';
-import { errorHandler } from './middlewares/error.middleware.js';
+import indexRoutes from './modules/index.js';
 
-/**
- * Main Express application instance.
- *
- * @type {import('express').Express}
- */
-const app = express();
+
+const app = Fastify({
+  logger: true
+});
 
 const allowedOrigins = [
   process.env.FRONTEND_URL_TRENDING,
@@ -19,33 +17,59 @@ const allowedOrigins = [
   'http://localhost:5175'
 ].filter(Boolean);
 
-app.use(cors({
+app.register(cors, {
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-}));
-
-app.use(express.json());
-
-// Basic health check & routes
-app.use('/', indexRoutes);
-
-// Swagger JSON spec endpoint (for Postman import or direct access)
-app.get('/api-docs.json', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.send(swaggerSpec);
+});
+// Hook to sanitize incoming query parameters that are literally "undefined"
+app.addHook('preValidation', async (request, reply) => {
+  if (request.query) {
+    for (const key in request.query) {
+      if (request.query[key] === 'undefined' || request.query[key] === 'null') {
+        delete request.query[key];
+      }
+    }
+  }
+});
+// Trả về JSON swaggerSpec cũ
+app.get('/api-docs.json', async (request, reply) => {
+  return swaggerSpec;
 });
 
-// Swagger UI
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// 404
-app.use((req, res) => {
-  res.status(404).json({ message: 'Not found' });
+// Đăng ký Swagger & Swagger UI của Fastify
+app.register(swagger, {
+  openapi: {
+    info: {
+      title: 'Scientific Journal System API (Fastify)',
+      version: '1.0.0'
+    }
+  }
 });
+
+app.register(swaggerUi, {
+  routePrefix: '/api-docs',
+  uiConfig: {
+    docExpansion: 'list',
+    deepLinking: false
+  },
+});
+
+// Health check
+app.get('/', async (request, reply) => {
+  return { message: 'Scientific Journal API is running (Fastify)' };
+});
+
+// Đăng ký toàn bộ module routes
+app.register(indexRoutes);
+
 
 // Error handling
-app.use(errorHandler);
+app.setErrorHandler(function (error, request, reply) {
+  const status = error.statusCode || 500;
+  reply.status(status).send({
+    message: error.message || 'Internal Server Error'
+  });
+});
 
 export default app;
