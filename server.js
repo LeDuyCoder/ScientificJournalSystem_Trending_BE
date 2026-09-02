@@ -1,86 +1,69 @@
 import dotenv from 'dotenv';
-
 dotenv.config();
 
-import app from './src/app.js';
-import pool, { checkPostgres } from './src/config/database.js';
+import fastifyApp from './src/app.js';
+import prisma from './src/config/prisma.js';
 import { checkRedis, closeRedis } from './src/config/redis.js';
 import { checkNeo4j, closeNeo4j } from './src/config/neo4j.js';
-import { checkMeiliConnection } from './src/config/meili.js';
+
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 async function bootstrap() {
-  // Required DB connections. Failure should prevent startup.
+  // Required DB connections.
   try {
-    await checkPostgres();
+    await prisma.$connect();
+    console.log('PostgreSQL (Prisma) connected successfully');
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('PostgreSQL connection failed. Server cannot start.', e?.message || e);
-    throw e; // Re-throw to be caught by the final catch block
+    throw e;
   }
 
-  // Optional DB connections for local dev.
-  // If Redis/Neo4j are not available, server can still start (health + swagger).
+  // Optional DB connections
   try {
     await checkRedis();
-    // eslint-disable-next-line no-console
     console.log('Redis connected successfully');
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn('Redis connection failed (continuing without Redis):', e?.message || e);
   }
 
   try {
     await checkNeo4j();
-    // eslint-disable-next-line no-console
     console.log('Neo4j connected successfully');
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn('Neo4j connection failed (continuing without Neo4j):', e?.message || e);
   }
 
+
+
   try {
-    await checkMeiliConnection();
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('Meilisearch connection failed (continuing without Meilisearch):', e?.message || e);
+    await fastifyApp.listen({ port: PORT, host: '0.0.0.0' });
+    console.log(`Server running on http://localhost:${PORT}`);
+  } catch (err) {
+    console.error('Error starting server:', err);
+    process.exit(1);
   }
 
-  const server = app.listen(PORT, () => {
-    // eslint-disable-next-line no-console
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-
   const shutdown = async () => {
-    // eslint-disable-next-line no-console
     console.log('Shutting down...');
+    await fastifyApp.close();
 
-    // Close the HTTP server first to reject new requests
-    server.close();
-
-    // Close database pools in parallel
     try {
       await Promise.allSettled([
-        pool.end(),
+        prisma.$disconnect(),
         closeRedis(),
         closeNeo4j ? closeNeo4j() : Promise.resolve(),
       ]);
     } catch (e) {
       // ignore
     }
-
     process.exit(0);
   };
-
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
 
 bootstrap().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error('Bootstrap error:', err);
   process.exit(1);
 });
-
-
