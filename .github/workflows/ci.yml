@@ -85,3 +85,53 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  docker:
+    name: Build & Push Docker Image
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/leduycoder/scientificjournalsystem-trending-be:latest
+            ghcr.io/leduycoder/scientificjournalsystem-trending-be:${{ github.sha }}
+
+  deploy:
+    name: Deploy to VPS
+    needs: docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ~/apps/researchpulse-trending-be
+            docker compose pull
+            docker compose up -d
+            docker image prune -f

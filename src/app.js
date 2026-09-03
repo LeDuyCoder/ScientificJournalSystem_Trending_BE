@@ -39,11 +39,9 @@ app.get('/api-docs.json', async (request, reply) => {
 
 // Đăng ký Swagger & Swagger UI của Fastify
 app.register(swagger, {
-  openapi: {
-    info: {
-      title: 'Scientific Journal System API (Fastify)',
-      version: '1.0.0'
-    }
+  mode: 'static',
+  specification: {
+    document: swaggerSpec
   }
 });
 
