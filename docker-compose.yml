@@ -10,8 +10,9 @@ services:
     env_file:
       - .env
     networks:
-      - app-network
+      - researchpulse_network
 
 networks:
-  app-network:
+  researchpulse_network:
     external: true
+    name: researchpulse_network
