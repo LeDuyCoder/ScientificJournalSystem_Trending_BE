@@ -1,51 +1,32 @@
-name: CI
+name: CI/CD for Production
 
 on:
   push:
-    branches:
-      - main
-      - dev
-      - feat/CI_CD-action
+    branches: [ "main" ]
   pull_request:
-    branches:
-      - main
-      - dev
-      - feat/CI_CD-action
+    branches: [ "main" ]
 
 jobs:
   build-and-test:
-    name: Build and Test
     runs-on: ubuntu-latest
-
+    
     services:
       postgres:
-        image: postgres:17
+        image: ankane/pgvector:latest
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: scientificjournalsystem_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d scientificjournalsystem_test"
+          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-          
-      neo4j:
-        image: neo4j:5
-        env:
-          NEO4J_AUTH: neo4j/testpassword
-        ports:
-          - 7687:7687
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+      
       redis:
-        image: redis:7
+        image: redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -54,84 +35,82 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/scientificjournalsystem_test
-      POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/scientificjournalsystem_test
-      NEO4J_URI: bolt://localhost:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: testpassword
-      REDIS_URL: redis://localhost:6379
-      JWT_SECRET: "test-dummy-jwt-secret"
-      NODE_ENV: test
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
+      
+      - name: Setup Node.js v22
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-
+          node-version: '22'
+          cache: 'npm'
+          
       - name: Install dependencies
-        run: npm install
-
-      - name: Generate Prisma Client
-        run: npx prisma generate
-
-      - name: Run database migrations
-        run: npx prisma migrate deploy
-
+        run: npm ci
+        
+      - name: Setup Prisma & Database
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+          
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
         run: npm test
 
-  docker:
-    name: Build & Push Docker Image
+  build-and-push:
     needs: build-and-test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
-
+    
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Login to GHCR
+        
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build & Push Docker Image
-        uses: docker/build-push-action@v6
+          
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+            
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/leduycoder/scientificjournalsystem-trending-be:latest
-            ghcr.io/leduycoder/scientificjournalsystem-trending-be:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    name: Deploy to VPS
-    needs: docker
+    needs: build-and-push
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.2.2
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd ~/apps/researchpulse-trending-be
-            docker-compose pull
-            docker-compose up -d
+            cd ~/apps/researchpulse-be
+            docker-compose pull backend
+            docker-compose up -d --force-recreate backend
             docker image prune -f
