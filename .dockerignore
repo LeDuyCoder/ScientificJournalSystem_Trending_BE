@@ -1,0 +1,28 @@
+node_modules
+npm-debug.log
+.DS_Store
+
+.git
+.github
+
+.env
+.env.*
+!.env.example
+
+# Test folders and artifacts
+test
+tests
+__tests__
+coverage
+vitest.config.js
+
+# Documentation and agent configs
+.agents
+.specify
+docs
+specs
+
+# Build / docker config files
+Dockerfile
+docker-compose.yml
+README.md

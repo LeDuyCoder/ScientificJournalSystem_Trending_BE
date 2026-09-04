@@ -1071,7 +1071,7 @@ fastify.get('/network/chord', { preHandler: [validateQuery(getCountryCollaborati
  *       200:
  *         description: CSV file generated successfully.
  */
-router.get('/network/chord/export', validateQuery(getCountryCollaborationChordSchema), exportCountryCollaborationMatrix);
+
 
 /**
  * @openapi
