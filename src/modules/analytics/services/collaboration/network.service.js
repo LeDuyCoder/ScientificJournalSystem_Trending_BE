@@ -123,30 +123,8 @@ export async function getCollaborationNetwork(options = {}) {
 
     // Project Scope topics / keywords
     if (projectTopicIds.length > 0 || projectKwIds.length > 0) {
-      const scopeSelects = [];
-      if (projectTopicIds.length > 0) {
-        params.push(projectTopicIds);
-        const pTopicIdx = params.length;
-        scopeSelects.push(`
-          SELECT a.article_id
-          FROM "Article" a
-          WHERE a.primary_topic = ANY($${pTopicIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
-          UNION
-          SELECT st.article_id
-          FROM "Sub_Topic" st
-          WHERE st.topic_id = ANY($${pTopicIdx}::bigint[])
-        `);
-      }
-      if (projectKwIds.length > 0) {
-        params.push(projectKwIds);
-        const pKwIdx = params.length;
-        scopeSelects.push(`
-          SELECT article_id
-          FROM "Keyword_Article"
-          WHERE keyword_id = ANY($${pKwIdx}::bigint[])
-        `);
-      }
-      cteParts.push(`project_articles AS (${scopeSelects.join(' UNION ')})`);
+      params.push(project_id);
+      cteParts.push(`project_articles AS (SELECT article_id FROM "Project_Article_Scope" WHERE project_id = $${params.length})`);
     }
 
     // Custom Subject Area Filter

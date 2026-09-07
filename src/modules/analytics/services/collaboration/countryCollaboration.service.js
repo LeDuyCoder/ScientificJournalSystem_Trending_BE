@@ -35,7 +35,7 @@ function prepareKeywords(keywords) {
  * @returns {Promise<Array<{article_id: number, publication_year: number}>>}
  */
 async function getFilteredArticleIds(scope, filters, client) {
-  const { subject_area, keywords, from_year, to_year } = filters;
+  const { project_id, subject_area, keywords, from_year, to_year } = filters;
   const { subjectCategoryIds, keywordIds } = scope;
 
   if (subjectCategoryIds.length === 0 && keywordIds.length === 0) {
@@ -46,32 +46,11 @@ async function getFilteredArticleIds(scope, filters, client) {
   const params = [];
 
   // 1. Project Scope topics / keywords
-  const scopeSelects = [];
-  if (subjectCategoryIds.length > 0) {
-    params.push(subjectCategoryIds);
-    const catIdx = params.length;
-    scopeSelects.push(`
-      SELECT a.article_id
-      FROM "Article" a
-      JOIN "Topic" t ON a.primary_topic = t.topic_id
-      WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
-      UNION
-      SELECT st.article_id
-      FROM "Sub_Topic" st
-      JOIN "Topic" t ON st.topic_id = t.topic_id
-      WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
-    `);
+  if (subjectCategoryIds.length > 0 || keywordIds.length > 0) {
+    params.push(project_id);
+    cteParts.push(`project_scope AS (SELECT article_id FROM "Project_Article_Scope" WHERE project_id = $${params.length})`);
   }
-  if (keywordIds.length > 0) {
-    params.push(keywordIds);
-    const kwIdx = params.length;
-    scopeSelects.push(`
-      SELECT article_id
-      FROM "Keyword_Article"
-      WHERE keyword_id = ANY($${kwIdx}::bigint[])
-    `);
-  }
-  cteParts.push(`project_scope AS (${scopeSelects.join(' UNION ')})`);
+
 
   // 2. Client filter: subject_area
   if (subject_area) {
@@ -315,7 +294,7 @@ export async function getCountryCollaborationChord(filters) {
     }
 
     // B2: Lấy danh sách các bài báo phù hợp với scope và bộ lọc
-    const articles = await getFilteredArticleIds(scope, { subject_area, keywords: preparedKeywords, from_year, to_year }, client);
+    const articles = await getFilteredArticleIds(scope, { project_id, subject_area, keywords: preparedKeywords, from_year, to_year }, client);
     if (articles.length === 0) {
       return [];
     }
@@ -328,7 +307,7 @@ export async function getCountryCollaborationChord(filters) {
       const duration = toYearNum - fromYearNum + 1;
       const prevFromYear = fromYearNum - duration;
       const prevToYear = fromYearNum - 1;
-      const prevArticles = await getFilteredArticleIds(scope, { subject_area, keywords: preparedKeywords, from_year: prevFromYear, to_year: prevToYear }, client);
+      const prevArticles = await getFilteredArticleIds(scope, { project_id, subject_area, keywords: preparedKeywords, from_year: prevFromYear, to_year: prevToYear }, client);
       if (prevArticles.length > 0) {
         const prevCountriesByArticle = await getCountriesByArticles(prevArticles, client);
         const prevPairs = buildCountryPairs(prevCountriesByArticle);

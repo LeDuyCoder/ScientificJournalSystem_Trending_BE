@@ -207,60 +207,69 @@ export async function getDashboardStats(filters = {}) {
     try {
         let scopeFilter = 'TRUE';
         const params = [currentYear, previousYear];
+        let cteSql = '';
+        let useCte = false;
 
         if (projectId) {
             const scope = await getProjectScope(pool, projectId);
-            const sqlFilters = [];
+            const unionParts = [];
 
             if (scope.subjectCategoryIds?.length > 0) {
                 params.push(scope.subjectCategoryIds);
-                sqlFilters.push(buildSubjectScopeSql(params.length));
+                const catIdx = params.length;
+                unionParts.push(`SELECT article_id FROM "Article" WHERE primary_topic IN (SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($${catIdx}::bigint[]))`);
+                unionParts.push(`SELECT st.article_id FROM "Sub_Topic" st WHERE st.topic_id IN (SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($${catIdx}::bigint[]))`);
             }
             if (scope.keywordIds?.length > 0) {
                 params.push(scope.keywordIds);
-                sqlFilters.push(buildKeywordScopeSql(params.length));
+                const kwIdx = params.length;
+                unionParts.push(`SELECT ka.article_id FROM "Keyword_Article" ka WHERE ka.keyword_id = ANY($${kwIdx}::bigint[])`);
             }
 
-            scopeFilter = sqlFilters.length > 0 ? `(${sqlFilters.join(' OR ')})` : 'FALSE';
+            if (unionParts.length > 0) {
+                useCte = true;
+                cteSql = `WITH target_articles AS (\n  ${unionParts.join('\n  UNION\n  ')}\n)`;
+            } else {
+                scopeFilter = 'FALSE';
+            }
         }
 
         // ── 2. TRUY VẤN PHẲNG (DÙNG PROMISE.ALL) VÀ CHỈ DÙNG KHÓA NGOẠI CÓ SẴN ──
+        const fromTable = useCte ? '"Article" a JOIN target_articles ta ON a.article_id = ta.article_id' : '"Article" a';
+        const whereClause = useCte ? 'COALESCE(a.is_deleted, false) = false' : `${scopeFilter} AND COALESCE(a.is_deleted, false) = false`;
+        const prefix = useCte ? cteSql + '\n' : '';
 
-        // Q1: Đếm Articles & Citations
-        const ARTICLES_CITATIONS_QUERY = `
+        const ARTICLES_CITATIONS_QUERY = prefix + `
             SELECT
-                COUNT(article_id) AS art_total,
-                COUNT(CASE WHEN publication_year = $1 THEN article_id END) AS art_current,
-                COUNT(CASE WHEN publication_year = $2 THEN article_id END) AS art_previous,
-                COALESCE(SUM(citation_count), 0) AS cit_total,
-                COALESCE(SUM(CASE WHEN publication_year = $1 THEN citation_count ELSE 0 END), 0) AS cit_current,
-                COALESCE(SUM(CASE WHEN publication_year = $2 THEN citation_count ELSE 0 END), 0) AS cit_previous
-            FROM "Article" a
-            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
+                COUNT(a.article_id) AS art_total,
+                COUNT(CASE WHEN a.publication_year = $1 THEN a.article_id END) AS art_current,
+                COUNT(CASE WHEN a.publication_year = $2 THEN a.article_id END) AS art_previous,
+                COALESCE(SUM(a.citation_count), 0) AS cit_total,
+                COALESCE(SUM(CASE WHEN a.publication_year = $1 THEN a.citation_count ELSE 0 END), 0) AS cit_current,
+                COALESCE(SUM(CASE WHEN a.publication_year = $2 THEN a.citation_count ELSE 0 END), 0) AS cit_previous
+            FROM ${fromTable}
+            WHERE ${whereClause}
         `;
 
-        // Q2: Đếm Journal bằng cách quét gọn qua Khóa ngoại (Article -> Issue -> Volume)
-        // Loại bỏ JOIN với bảng Journal nếu không thực sự cần check j.is_deleted để tiết kiệm I/O
-        const JOURNALS_QUERY = `
+        const JOURNALS_QUERY = prefix + `
             SELECT
                 COUNT(DISTINCT v.journal_id) AS total_val,
                 COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN v.journal_id END) AS current_val,
                 COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN v.journal_id END) AS previous_val
-            FROM "Article" a
+            FROM ${fromTable}
             JOIN "Issue" iss ON a.issue_id = iss.issue_id
             JOIN "Volume" v ON iss.volume_id = v.volume_id
-            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
+            WHERE ${whereClause}
         `;
 
-        // Q3: Đếm Author bằng cách quét thẳng sang bảng trung gian (Article -> Author_Article)
-        const AUTHORS_QUERY = `
+        const AUTHORS_QUERY = prefix + `
             SELECT
                 COUNT(DISTINCT aa.author_id) AS total_val,
                 COUNT(DISTINCT CASE WHEN a.publication_year = $1 THEN aa.author_id END) AS current_val,
                 COUNT(DISTINCT CASE WHEN a.publication_year = $2 THEN aa.author_id END) AS previous_val
-            FROM "Article" a
+            FROM ${fromTable}
             JOIN "Author_Article" aa ON a.article_id = aa.article_id
-            WHERE ${scopeFilter} AND COALESCE(a.is_deleted, false) = false
+            WHERE ${whereClause}
         `;
 
         // ── 3. CHẠY SONG SONG BẤT ĐỒNG BỘ BẰNG PROMISE.ALL ──
@@ -351,3 +360,4 @@ export async function getDashboardStats(filters = {}) {
  * @property {DensityMetric} densityIndex
  * @property {StatMetric} totalRelocated
  */
+

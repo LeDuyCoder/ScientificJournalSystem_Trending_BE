@@ -371,7 +371,7 @@ async function fetchCrossDomainMetrics(client, scope) {
       COALESCE(SUM(COALESCE(ta.citation_count, 0)), 0) AS citation_count
     FROM "Keyword_Article" ka
     JOIN "Keyword" k ON ka.keyword_id = k.keyword_id
-    JOIN target_articles ta ON ka.article_id = ta.article_id
+    JOIN "Project_Article_Scope" pas ON a.article_id = pas.article_id
     JOIN article_subjects ON article_subjects.article_id = ta.article_id
     WHERE ka.keyword_id = ANY($1::bigint[])
       AND article_subjects.subject_area_id <> $2

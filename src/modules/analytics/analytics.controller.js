@@ -2,6 +2,28 @@
  * Express controller for analytics endpoints.
  */
 import logger from '../../utils/logger.js';
+
+import { Queue } from 'bullmq';
+import { v4 as uuidv4 } from 'uuid';
+import pool from '../../config/database.js';
+import Redis from 'ioredis';
+
+const redisConnection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: null });
+const analyticsQueue = new Queue('analytics-queue', { connection: redisConnection });
+
+async function enqueueAnalyticsJob(jobType, queryParams) {
+  const jobId = uuidv4();
+  
+  await pool.query(
+    `INSERT INTO "analytics_job" (job_id, job_type, status, progress, created_at) VALUES ($1, $2, 'PENDING', 0, NOW())`,
+    [jobId, jobType]
+  );
+  
+  await analyticsQueue.add(jobType, { query: queryParams }, { jobId });
+  
+  return jobId;
+}
+
 import { z } from 'zod';
 import { getTopEntities } from '../dashboard/services/dashboard/analytics.service.js';
 import { getPublicationTrends } from './services/trends/trends.service.js';
@@ -174,19 +196,23 @@ export async function getTopEntitiesHandler(request, reply) {
  */
 export async function fetchImpactMatrix(request, reply) {
   try {
-    const { project_id, subject_area, keywords, from_year, to_year, limit } = request.query;
-    const filters = { projectId: project_id, subjectArea: subject_area, keywords, fromYear: from_year, toYear: to_year, limit };
-    
-    const data = await getImpactMatrixData(filters);
+    const jobId = await enqueueAnalyticsJob('impact-matrix', request.query);
 
-    return reply.send({
+    reply.send({
       code: 200,
-      message: "Fetch impact matrix data successfully",
-      data,
+      message: "Job added to queue",
+      data: {
+        jobId,
+        status: "processing"
+      }
     });
-  } catch (error) {
-    logger.error("Error in fetchImpactMatrix:", error);
-    throw error;
+  } catch (err) {
+    logger.error('Error enqueuing job impact-matrix:', err);
+    return reply.status(500).send({
+      code: 500,
+      message: err.message,
+      data: null,
+    });
   }
 }
 
@@ -249,15 +275,15 @@ export async function fetchDistribution(request, reply) {
       data,
     });
   } catch (error) {
-    if (error.status === 404 || error.code === 404) {
-      return reply.status(404).send({
-        code: 404,
-        message: error.message,
-        data: null,
-      });
+      if (error.status === 404 || error.code === 404) {
+        return reply.status(404).send({
+          code: 404,
+          message: error.message,
+          data: null,
+        });
+      }
+      throw error;
     }
-    throw err;
-  }
 }
 
 /**
@@ -414,23 +440,23 @@ export async function fetchTopicIntensityMatrix(request, reply) {
  */
 export async function fetchCollaborationNetwork(request, reply) {
   try {
-    const data = await getCollaborationNetwork(request.query);
+    const jobId = await enqueueAnalyticsJob('network-analysis', request.query);
 
     reply.send({
       code: 200,
-      message: "Fetch global collaboration network successfully",
-      data,
+      message: "Job added to queue",
+      data: {
+        jobId,
+        status: "processing"
+      }
     });
   } catch (err) {
-    const statusCode = err.status || err.code;
-    if (statusCode && Number.isInteger(statusCode) && statusCode !== 500) {
-      return reply.status(statusCode).send({
-        code: statusCode,
-        message: err.message,
-        data: null,
-      });
-    }
-    throw err;
+    logger.error('Error enqueuing job network-analysis:', err);
+    return reply.status(500).send({
+      code: 500,
+      message: err.message,
+      data: null,
+    });
   }
 }
 
@@ -446,40 +472,23 @@ export async function fetchCollaborationNetwork(request, reply) {
  */
 export async function fetchRankings(request, reply) {
   try {
-    const {
-      project_id: projectId,
-      subject_area,
-      keywords,
-      from_year,
-      to_year,
-      limit
-    } = request.query;
+    const jobId = await enqueueAnalyticsJob('rankings', request.query);
 
-    const filters = {
-      subjectArea: subject_area,
-      keywords: keywords,
-      fromYear: from_year,
-      toYear: to_year,
-      limit,
-    };
-
-    const data = await getInfluentialRankings(projectId, filters);
-
-    return reply.send({
+    reply.send({
       code: 200,
-      message: "Fetch influential rankings successfully",
-      data,
+      message: "Job added to queue",
+      data: {
+        jobId,
+        status: "processing"
+      }
     });
   } catch (err) {
-    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
-    if (statusCode !== 500) {
-      return reply.status(statusCode).send({
-        code: statusCode,
-        message: err.message,
-        data: null,
-      });
-    }
-    throw err;
+    logger.error('Error enqueuing job rankings:', err);
+    return reply.status(500).send({
+      code: 500,
+      message: err.message,
+      data: null,
+    });
   }
 }
 
@@ -590,18 +599,23 @@ export async function fetchCountryCollaborationChord(request, reply) {
  */
 export async function fetchNetworkTopology(request, reply) {
   try {
-    const data = await getNetworkTopology(request.query);
+    const jobId = await enqueueAnalyticsJob('topology-analysis', request.query);
 
-    reply.status(200).send({
+    reply.send({
       code: 200,
-      message: 'Fetch network topology successfully',
-      data,
+      message: "Job added to queue",
+      data: {
+        jobId,
+        status: "processing"
+      }
     });
   } catch (err) {
-    if (err.status) {
-      return reply.status(err.status).send({ code: err.status, message: err.message, data: null });
-    }
-    throw err;
+    logger.error('Error enqueuing job topology-analysis:', err);
+    return reply.status(500).send({
+      code: 500,
+      message: err.message,
+      data: null,
+    });
   }
 }
 
@@ -617,94 +631,23 @@ export async function fetchNetworkTopology(request, reply) {
  */
 export async function fetchKeywordVectors(request, reply) {
   try {
-    const projectId = request.query.project_id;
+    const jobId = await enqueueAnalyticsJob('keyword-vectors', request.query);
 
-    if (!projectId) {
-      return reply.status(400).send({
-        code: 400,
-        message: 'project_id is required',
-        data: null,
-      });
-    }
-
-    const fromYear = request.query.from_year ? Number(request.query.from_year) : undefined;
-    const toYear = request.query.to_year ? Number(request.query.to_year) : undefined;
-
-    if (fromYear !== undefined && Number.isNaN(fromYear)) {
-      return reply.status(400).send({
-        code: 400,
-        message: 'Invalid from_year parameter',
-        data: null,
-      });
-    }
-    if (toYear !== undefined && Number.isNaN(toYear)) {
-      return reply.status(400).send({
-        code: 400,
-        message: 'Invalid to_year parameter',
-        data: null,
-      });
-    }
-
-    if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
-      return reply.status(400).send({
-        code: 400,
-        message: 'Invalid year range',
-        data: null,
-      });
-    }
-
-    let windowMonths = 12;
-    if (request.query.window_months !== undefined) {
-      const parsedWindow = Number(request.query.window_months);
-      if (Number.isNaN(parsedWindow) || parsedWindow <= 0 || parsedWindow > 36) {
-        return reply.status(400).send({
-          code: 400,
-          message: 'Invalid window_months',
-          data: null,
-        });
-      }
-      windowMonths = parsedWindow;
-    }
-
-    let limit = 10;
-    if (request.query.limit !== undefined) {
-      const parsedLimit = Number(request.query.limit);
-      if (Number.isNaN(parsedLimit) || parsedLimit <= 0) {
-        return reply.status(400).send({
-          code: 400,
-          message: 'Invalid limit',
-          data: null,
-        });
-      }
-      limit = parsedLimit > 50 ? 50 : parsedLimit;
-    }
-
-    const filters = {
-      subjectArea: request.query.subject_area ? String(request.query.subject_area).trim() : undefined,
-      keywords: request.query.keywords || request.query.keyword,
-      fromYear,
-      toYear,
-      windowMonths,
-      limit,
-    };
-
-    const data = await getKeywordVectors(projectId, filters);
-
-    return reply.send({
+    reply.send({
       code: 200,
-      message: 'Fetch trend vectors successfully',
-      data,
+      message: "Job added to queue",
+      data: {
+        jobId,
+        status: "processing"
+      }
     });
   } catch (err) {
-    const statusCode = err.code && Number.isInteger(err.code) ? err.code : 500;
-    if (statusCode !== 500) {
-      return reply.status(statusCode).send({
-        code: statusCode,
-        message: err.message,
-        data: null,
-      });
-    }
-    throw err;
+    logger.error('Error enqueuing job keyword-vectors:', err);
+    return reply.status(500).send({
+      code: 500,
+      message: err.message,
+      data: null,
+    });
   }
 }
 
@@ -827,15 +770,23 @@ export async function fetchProjectSubjectCategories(request, reply) {
 
 export async function fetchCollaborationInsights(request, reply) {
   try {
-    const { project_id } = request.query;
-    const data = await getCollaborationInsights(project_id, request.query);
+    const jobId = await enqueueAnalyticsJob('collab-insights', request.query);
+
     reply.send({
       code: 200,
-      message: 'Fetch collaboration insights successfully',
-      data
+      message: "Job added to queue",
+      data: {
+        jobId,
+        status: "processing"
+      }
     });
   } catch (err) {
-    throw err;
+    logger.error('Error enqueuing job collab-insights:', err);
+    return reply.status(500).send({
+      code: 500,
+      message: err.message,
+      data: null,
+    });
   }
 }
 

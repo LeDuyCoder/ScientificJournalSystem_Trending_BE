@@ -110,94 +110,68 @@ export async function getDistribution(options) {
   const client = await pool.connect();
 
   try {
+    // --- FAST PATH: Check if NO custom filters are applied ---
+    const hasProjectFilter = project_id && project_id !== 'undefined' && project_id !== 'null';
+    const hasSubjectArea = !!subject_area;
+    const hasKeywords = keywordList.length > 0;
+
+    if (!hasProjectFilter && !hasSubjectArea && !hasKeywords) {
+      let fastParams = [];
+      let fastWhere = [];
+
+      if (from_year !== undefined && from_year !== null && from_year !== '') {
+        fastParams.push(Number(from_year));
+        fastWhere.push(`aty.year >= $${fastParams.length}`);
+      }
+      if (to_year !== undefined && to_year !== null && to_year !== '') {
+        fastParams.push(Number(to_year));
+        fastWhere.push(`aty.year <= $${fastParams.length}`);
+      }
+
+      const fastWhereClause = fastWhere.length > 0 ? `WHERE ${fastWhere.join(' AND ')}` : '';
+
+      const fastSql = `
+        SELECT 
+          sa.display_name AS name,
+          SUM(aty.article_count)::integer AS count
+        FROM "analytics_topic_year" aty
+        JOIN "Topic" t ON aty.topic_id = t.topic_id
+        JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+        JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
+        ${fastWhereClause}
+        GROUP BY sa.display_name
+      `;
+
+      const result = await client.query(fastSql, fastParams);
+      
+      const counts = {};
+      result.rows.forEach(r => {
+        counts[r.name] = Number(r.count) || 0;
+      });
+
+      const finalResult = calculateAndNormalizePercentage(counts, 3);
+
+      try {
+        await redisSet(cacheKey, JSON.stringify(finalResult), CACHE_TTL);
+      } catch (err) {}
+
+      return finalResult;
+    }
+    // --- END FAST PATH ---
+
     const params = [];
     const sqlFilters = [];
 
     // --- Xử lý Project Scope (Nếu có project_id hợp lệ) ---
-    if (project_id && project_id !== 'undefined' && project_id !== 'null') {
-      // 1. Verify project
-      const projectRes = await client.query(
-        `SELECT project_id, subject_area FROM "Project" WHERE project_id = $1`,
-        [project_id]
-      );
-
-      if (projectRes.rows.length === 0) {
-        const error = new Error('Project not found');
-        error.status = 404;
-        throw error;
-      }
-
-      const project = projectRes.rows[0];
-
-      // 2. Fetch project's categories (Tracking Scope)
-      const categoriesRes = await client.query(
-        `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
-        [project.subject_area]
-      );
-      const projectCategoryIds = categoriesRes.rows.map(r => Number(r.subject_category_id));
-
-      // 3. Fetch project's keywords (Tracking Scope)
-      const keywordsRes = await client.query(
-        `SELECT keyword_id FROM "Project_Keyword" WHERE project_id = $1`,
-        [project_id]
-      );
-      const projectKeywordIds = keywordsRes.rows.map(r => Number(r.keyword_id));
-
-      if (projectCategoryIds.length === 0 && projectKeywordIds.length === 0) {
-        return [];
-      }
-
-      // --- Xác định cấu trúc của Project Scope dựa vào Frontend truyền gì ---
-      let applyProjectCategories = false;
-      let applyProjectKeywords = false;
-
-      if (subject_area && !keywordList.length) {
-        applyProjectCategories = true;
-      } else if (keywordList.length > 0 && !subject_area) {
-        applyProjectKeywords = true;
-      } else {
-        applyProjectCategories = true;
-        applyProjectKeywords = true;
-      }
-
-      const scopeConditions = [];
-
-      if (applyProjectCategories && projectCategoryIds.length > 0) {
-        params.push(projectCategoryIds);
-        const catIndex = params.length;
-        scopeConditions.push(`
-          (
-            EXISTS (
-              SELECT 1 FROM "Topic" primary_topic
-              WHERE primary_topic.topic_id = a.primary_topic
-                AND primary_topic.subject_category_id = ANY($${catIndex}::bigint[])
-            )
-            OR EXISTS (
-              SELECT 1 FROM "Sub_Topic" st
-              JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
-              WHERE st.article_id = a.article_id
-                AND sub_topic.subject_category_id = ANY($${catIndex}::bigint[])
-            )
-          )
-        `);
-      }
-
-      if (applyProjectKeywords && projectKeywordIds.length > 0) {
-        params.push(projectKeywordIds);
-        const kwIndex = params.length;
-        scopeConditions.push(`
-          EXISTS (
-            SELECT 1 FROM "Keyword_Article" ka
-            WHERE ka.article_id = a.article_id
-              AND ka.keyword_id = ANY($${kwIndex}::bigint[])
-          )
-        `);
-      }
-
-      if (scopeConditions.length > 0) {
-        sqlFilters.push(`(${scopeConditions.join(' OR ')})`);
-      } else {
-        return [];
+    let useCte = false;
+    if (hasProjectFilter) {
+      useCte = true;
+      const pId = typeof project_id !== 'undefined' ? project_id : (typeof projectId !== 'undefined' ? projectId : null);
+      if (pId) {
+        params.push(pId);
+        if (typeof sqlFilters !== 'undefined') {
+          sqlFilters.push(`pas.project_id = $${params.length}`);
+        }
       }
     }
 
@@ -278,11 +252,14 @@ export async function getDistribution(options) {
 
     const whereClause = sqlFilters.length > 0 ? `AND ${sqlFilters.join(' AND ')}` : '';
 
-    const querySql = `
+    const prefix = '';
+    const fromTable = typeof useCte !== 'undefined' && useCte ? '"Article" a JOIN "Project_Article_Scope" pas ON a.article_id = pas.article_id' : '"Article" a';
+
+    const querySql = prefix + `
       SELECT 
         t.display_name AS group_val, 
         COUNT(DISTINCT a.article_id)::integer AS total
-      FROM "Article" a
+      FROM ${fromTable}
       INNER JOIN "Topic" t ON a.primary_topic = t.topic_id
       WHERE COALESCE(a.is_deleted, false) = false
         AND t.display_name IS NOT NULL

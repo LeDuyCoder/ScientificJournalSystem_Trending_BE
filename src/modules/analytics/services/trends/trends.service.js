@@ -5,7 +5,7 @@ import logger from '../../../../utils/logger.js';
 const CACHE_TTL = 43200; // 12 hours // 3 minutes
 
 /**
- * Hàm phân tích và làm sạch keywords
+ * HÃ m phÃ¢n tÃ­ch vÃ  lÃ m sáº¡ch keywords
  */
 function prepareKeywords(keywords) {
   if (!keywords) return [];
@@ -14,7 +14,7 @@ function prepareKeywords(keywords) {
 }
 
 /**
- * Hàm chuẩn hoá chuỗi thời gian (timeline) và đảm bảo các năm thiếu được điền giá trị 0
+ * HÃ m chuáº©n hoÃ¡ chuá»—i thá»i gian (timeline) vÃ  Ä‘áº£m báº£o cÃ¡c nÄƒm thiáº¿u Ä‘Æ°á»£c Ä‘iá»n giÃ¡ trá»‹ 0
  */
 function normalizeTrendSeries(records, from_year, to_year) {
   const timeline = [];
@@ -79,8 +79,59 @@ export async function getPublicationTrends(options = {}) {
     const params = [];
     const sqlFilters = [];
 
-    // --- Xử lý Project Scope (Nếu có project_id hợp lệ) ---
-    if (project_id && project_id !== 'undefined' && project_id !== 'null') {
+    // --- FAST PATH: Check if NO custom filters are applied ---
+    const hasProjectFilter = project_id && project_id !== 'undefined' && project_id !== 'null';
+    const hasSubjectCategory = !!subject_category;
+    const hasSubjectArea = !!subject_area;
+    const hasKeywords = keywordList.length > 0;
+    
+    if (!hasProjectFilter && !hasSubjectCategory && !hasSubjectArea && !hasKeywords) {
+      let fastParams = [];
+      let fastWhere = [];
+      
+      if (from_year !== undefined && from_year !== null && from_year !== '') {
+        fastParams.push(Number(from_year));
+        fastWhere.push(`year >= $${fastParams.length}`);
+      }
+      if (to_year !== undefined && to_year !== null && to_year !== '') {
+        fastParams.push(Number(to_year));
+        fastWhere.push(`year <= $${fastParams.length}`);
+      }
+      
+      const fastWhereClause = fastWhere.length > 0 ? `WHERE ${fastWhere.join(' AND ')}` : '';
+      
+      const fastSql = `
+        SELECT 
+          year, 
+          SUM(article_count)::integer AS articles,
+          SUM(citation_count)::integer AS citations
+        FROM "analytics_topic_year"
+        ${fastWhereClause}
+        GROUP BY year
+        ORDER BY year ASC
+      `;
+      
+      const result = await client.query(fastSql, fastParams);
+      
+      const records = result.rows.map(row => ({
+        year: Number(row.year),
+        articles: row.articles || 0,
+        citations: row.citations || 0
+      }));
+
+      const finalResult = normalizeTrendSeries(records, from_year, to_year);
+
+      try {
+        await redisSet(cacheKey, JSON.stringify(finalResult), CACHE_TTL);
+      } catch (err) {
+        logger.warn('Failed to set trend data in Redis cache:', err?.message || err);
+      }
+      return finalResult;
+    }
+    // --- END FAST PATH ---
+
+    // --- Xá»­ lÃ½ Project Scope (Náº¿u cÃ³ project_id há»£p lá»‡) ---
+    if (hasProjectFilter) {
       const projectRes = await client.query(
         `SELECT project_id, subject_area FROM "Project" WHERE project_id = $1`,
         [project_id]
@@ -299,3 +350,4 @@ export async function getPublicationTrends(options = {}) {
     throw error;
   }
 }
+

@@ -11,7 +11,7 @@ function calcGrowthRate(current, previous) {
 }
 
 export async function getPublicationTrendsData(scope, timeframeQuery) {
-  const cacheKey = `analytics:pubtrends:v5:${scope.resolvedProjectId || 'all'}:${scope.mappedDomain}:${scope.projectCategoryIds.join(',')}:${timeframeQuery.from_year}:${timeframeQuery.to_year}`;
+  const cacheKey = `analytics:pubtrends:v6:${scope.resolvedProjectId || 'all'}:${scope.mappedDomain}:${scope.projectCategoryIds.join(',')}:${timeframeQuery.from_year}:${timeframeQuery.to_year}`;
   
   return fetchWithCache(cacheKey, PUB_TTL, async () => {
     let growthRate = 0;
@@ -30,27 +30,13 @@ export async function getPublicationTrendsData(scope, timeframeQuery) {
         sql = `
           WITH target_topics AS (
             SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($1::bigint[])
-          ),
-          target_articles AS (
-            SELECT article_id, publication_year
-            FROM "Article"
-            WHERE primary_topic IN (SELECT topic_id FROM target_topics)
-              AND coalesce(is_deleted, false) = false
-              AND publication_year >= $2
-              AND publication_year <= $3
-            UNION
-            SELECT a.article_id, a.publication_year
-            FROM "Sub_Topic" st
-            JOIN "Article" a ON st.article_id = a.article_id
-            WHERE st.topic_id IN (SELECT topic_id FROM target_topics)
-              AND coalesce(a.is_deleted, false) = false
-              AND a.publication_year >= $2
-              AND a.publication_year <= $3
           )
-          SELECT publication_year AS year, COUNT(article_id)::integer AS articles
-          FROM target_articles
-          GROUP BY publication_year
-          ORDER BY publication_year ASC
+          SELECT year, SUM(article_count)::integer AS articles
+          FROM "analytics_topic_year"
+          WHERE topic_id IN (SELECT topic_id FROM target_topics)
+            AND year >= $2 AND year <= $3
+          GROUP BY year
+          ORDER BY year ASC
         `;
       } else if (scope.mappedDomain && scope.mappedDomain !== 'all') {
         params.push(scope.mappedDomain, from_year, to_year);
@@ -60,38 +46,22 @@ export async function getPublicationTrendsData(scope, timeframeQuery) {
             JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
             JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
             WHERE LOWER(sa.display_name) = LOWER($1)
-          ),
-          target_articles AS (
-            SELECT article_id, publication_year
-            FROM "Article"
-            WHERE primary_topic IN (SELECT topic_id FROM target_topics)
-              AND coalesce(is_deleted, false) = false
-              AND publication_year >= $2
-              AND publication_year <= $3
-            UNION
-            SELECT a.article_id, a.publication_year
-            FROM "Sub_Topic" st
-            JOIN "Article" a ON st.article_id = a.article_id
-            WHERE st.topic_id IN (SELECT topic_id FROM target_topics)
-              AND coalesce(a.is_deleted, false) = false
-              AND a.publication_year >= $2
-              AND a.publication_year <= $3
           )
-          SELECT publication_year AS year, COUNT(article_id)::integer AS articles
-          FROM target_articles
-          GROUP BY publication_year
-          ORDER BY publication_year ASC
+          SELECT year, SUM(article_count)::integer AS articles
+          FROM "analytics_topic_year"
+          WHERE topic_id IN (SELECT topic_id FROM target_topics)
+            AND year >= $2 AND year <= $3
+          GROUP BY year
+          ORDER BY year ASC
         `;
       } else {
         params.push(from_year, to_year);
         sql = `
-          SELECT publication_year AS year, COUNT(article_id)::integer AS articles
-          FROM "Article"
-          WHERE coalesce(is_deleted, false) = false
-            AND publication_year >= $1
-            AND publication_year <= $2
-          GROUP BY publication_year
-          ORDER BY publication_year ASC
+          SELECT year, SUM(article_count)::integer AS articles
+          FROM "analytics_topic_year"
+          WHERE year >= $1 AND year <= $2
+          GROUP BY year
+          ORDER BY year ASC
         `;
       }
 

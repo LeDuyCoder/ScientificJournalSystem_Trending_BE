@@ -98,79 +98,76 @@ export async function getGeoDistribution(projectId, filters = {}) {
   const client = await pool.connect();
 
   try {
+    // --- FAST PATH: Check if NO custom filters are applied ---
+    const hasProjectFilter = projectId && projectId !== 'undefined' && projectId !== 'null';
+    const hasSubjectArea = !!subjectArea;
+    const hasKeywords = keywordList.length > 0;
+    const hasCountry = !!normalizedCountry;
+
+    if (!hasProjectFilter && !hasSubjectArea && !hasKeywords) {
+      let fastParams = [];
+      let fastWhere = [];
+
+      if (fromYear !== undefined && fromYear !== null && fromYear !== '') {
+        fastParams.push(Number(fromYear));
+        fastWhere.push(`year >= $${fastParams.length}`);
+      }
+      if (toYear !== undefined && toYear !== null && toYear !== '') {
+        fastParams.push(Number(toYear));
+        fastWhere.push(`year <= $${fastParams.length}`);
+      }
+
+      const fastWhereClause = fastWhere.length > 0 ? `WHERE ${fastWhere.join(' AND ')}` : '';
+      let fastSql;
+
+      if (hasCountry) {
+        // Find regions inside this country is harder with precomputed country codes
+        // We'll fallback to standard DB queries if country filter is present.
+      } else {
+        fastSql = `
+          SELECT 
+            country_code AS "countryCode",
+            SUM(article_count)::integer AS count
+          FROM "analytics_country_year"
+          ${fastWhereClause}
+          GROUP BY country_code
+          ORDER BY count DESC
+        `;
+        
+        const result = await client.query(fastSql, fastParams);
+        
+        const validRecords = [];
+        for (const row of result.rows) {
+          const code = row.countryCode ? String(row.countryCode).toUpperCase().trim() : null;
+          if (!code || !isValidCountryCode(code)) continue;
+          validRecords.push({ countryCode: code, count: Number(row.count || 0) });
+        }
+
+        const finalizedData = calculateGeoIntensity(validRecords);
+
+        try {
+          await redisSet(cacheKey, JSON.stringify(finalizedData), CACHE_TTL);
+        } catch (cacheErr) {}
+
+        return finalizedData;
+      }
+    }
+    // --- END FAST PATH ---
+
     // 1. Verify project exists
-    const projectRes = await client.query(
-      `SELECT project_id, subject_area FROM "Project" WHERE project_id = $1`,
-      [projectId]
-    );
-
-    if (projectRes.rows.length === 0) {
-      const error = new Error('Project not found');
-      error.code = 404;
-      throw error;
-    }
-
-    const project = projectRes.rows[0];
-
-    // 2. Fetch project's categories
-    const categoriesRes = await client.query(
-      `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
-      [project.subject_area]
-    );
-    const projectCategoryIds = categoriesRes.rows.map(r => Number(r.subject_category_id));
-
-    // 3. Fetch project's keywords
-    const keywordsRes = await client.query(
-      `SELECT keyword_id FROM "Project_Keyword" WHERE project_id = $1`,
-      [projectId]
-    );
-    const projectKeywordIds = keywordsRes.rows.map(r => Number(r.keyword_id));
-
-    // If both project subject area categories and keywords are empty, return empty result
-    if (projectCategoryIds.length === 0 && projectKeywordIds.length === 0) {
-      logger.info(`Project ${projectId} has no tracking scope. Returning empty array.`);
-      return [];
-    }
-
-    const params = [];
-    const sqlFilters = [];
-
-    // Project scope filter block: (categories OR keywords)
-    const scopeConditions = [];
-    if (projectCategoryIds.length > 0) {
-      params.push(projectCategoryIds);
-      const catIndex = params.length;
-      scopeConditions.push(`
-        (
-          EXISTS (
-            SELECT 1 FROM "Topic" primary_topic
-            WHERE primary_topic.topic_id = a.primary_topic
-              AND primary_topic.subject_category_id = ANY($${catIndex}::bigint[])
-          )
-          OR EXISTS (
-            SELECT 1 FROM "Sub_Topic" st
-            JOIN "Topic" sub_topic ON st.topic_id = sub_topic.topic_id
-            WHERE st.article_id = a.article_id
-              AND sub_topic.subject_category_id = ANY($${catIndex}::bigint[])
-          )
-        )
-      `);
-    }
-
-    if (projectKeywordIds.length > 0) {
-      params.push(projectKeywordIds);
-      const kwIndex = params.length;
-      scopeConditions.push(`
-        EXISTS (
-          SELECT 1 FROM "Keyword_Article" ka
-          WHERE ka.article_id = a.article_id
-            AND ka.keyword_id = ANY($${kwIndex}::bigint[])
-        )
-      `);
-    }
-
-    if (scopeConditions.length > 0) {
-      sqlFilters.push(`(${scopeConditions.join(' OR ')})`);
+    let projectCategoryIds = [];
+    let projectKeywordIds = [];
+    
+    let useCte = false;
+    if (hasProjectFilter) {
+      useCte = true;
+      const pId = typeof project_id !== 'undefined' ? project_id : (typeof projectId !== 'undefined' ? projectId : null);
+      if (pId) {
+        params.push(pId);
+        if (typeof sqlFilters !== 'undefined') {
+          sqlFilters.push(`pas.project_id = $${params.length}`);
+        }
+      }
     }
 
     // Client custom filter: subject_area
@@ -262,12 +259,13 @@ export async function getGeoDistribution(projectId, filters = {}) {
       const countryIndex = params.length;
 
       querySql = `
-        WITH FilteredArticles AS (
-          SELECT a.article_id, a.issue_id
-          FROM "Article" a
-          WHERE COALESCE(a.is_deleted, false) = false
-            ${whereClause}
-        )
+        WITH ${useCte ? cteSql : ''} FilteredArticles AS (
+            SELECT a.article_id, a.issue_id
+            FROM "Article" a
+            ${useCte ? 'JOIN "Project_Article_Scope" pas ON a.article_id = pas.article_id' : ''}
+            WHERE COALESCE(a.is_deleted, false) = false
+              ${whereClause}
+          )
         SELECT 
           country_zone.code AS "countryCode",
           country_zone.name AS "countryName",
@@ -291,12 +289,13 @@ export async function getGeoDistribution(projectId, filters = {}) {
       `;
     } else {
       querySql = `
-        WITH FilteredArticles AS (
-          SELECT a.article_id, a.issue_id
-          FROM "Article" a
-          WHERE COALESCE(a.is_deleted, false) = false
-            ${whereClause}
-        )
+        WITH ${useCte ? cteSql : ''} FilteredArticles AS (
+            SELECT a.article_id, a.issue_id
+            FROM "Article" a
+            ${useCte ? 'JOIN "Project_Article_Scope" pas ON a.article_id = pas.article_id' : ''}
+            WHERE COALESCE(a.is_deleted, false) = false
+              ${whereClause}
+          )
         SELECT 
           z.code AS "countryCode",
           COUNT(DISTINCT fa.article_id)::integer AS count
