@@ -24,22 +24,13 @@ export async function getImpactMatrixData(query) {
       let params = [];
       let articleFilter = '';
 
-      if (scope.hasProject && scope.projectCategoryIds.length > 0) {
+      if (scope.hasProject) {
         articleFilter = `
-          WITH target_topics AS (
-            SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($${params.length + 1}::bigint[])
-          ),
-          project_articles_issues AS (
-            SELECT issue_id, article_id
-            FROM "Article" a
-            WHERE primary_topic IN (SELECT topic_id FROM target_topics)
-              AND coalesce(is_deleted, false) = false
-            UNION
+          WITH project_articles_issues AS (
             SELECT a.issue_id, a.article_id
-            FROM "Sub_Topic" st
-            JOIN "Article" a ON st.article_id = a.article_id
-            WHERE st.topic_id IN (SELECT topic_id FROM target_topics)
-              AND coalesce(a.is_deleted, false) = false
+            FROM "Project_Article_Scope" pas
+            JOIN "Article" a ON pas.article_id = a.article_id
+            WHERE pas.project_id = $${params.length + 1}
           ),
           issue_counts AS (
             SELECT issue_id, COUNT(DISTINCT article_id) AS cnt
@@ -54,7 +45,7 @@ export async function getImpactMatrixData(query) {
             GROUP BY v.journal_id
           )
         `;
-        params.push(scope.projectCategoryIds);
+        params.push(scope.resolvedProjectId);
       } else if (scope.mappedDomain && scope.mappedDomain !== 'all') {
         articleFilter = `
           WITH target_topics AS (

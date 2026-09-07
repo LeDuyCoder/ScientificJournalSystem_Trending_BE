@@ -212,36 +212,7 @@ export async function getImpactQuartiles(projectId, filters = {}) {
     }
 
     // Build project scope CTE using fast UNION branches instead of slow EXISTS
-    const projectArticlesCTE = [];
-    if (projectCategoryIds.length > 0) {
-      projectArticlesCTE.push(`
-        SELECT a.article_id
-        FROM "Article" a
-        JOIN "Topic" t ON a.primary_topic = t.topic_id
-        WHERE t.subject_category_id = ANY($1::bigint[])
-          AND COALESCE(a.is_deleted, false) = false
-        UNION
-        SELECT st.article_id
-        FROM "Sub_Topic" st
-        JOIN "Topic" t ON st.topic_id = t.topic_id
-        JOIN "Article" a ON st.article_id = a.article_id
-        WHERE t.subject_category_id = ANY($1::bigint[])
-          AND COALESCE(a.is_deleted, false) = false
-      `);
-    }
-    if (projectKeywordIds.length > 0) {
-      projectArticlesCTE.push(`
-        SELECT ka.article_id
-        FROM "Keyword_Article" ka
-        JOIN "Article" a ON ka.article_id = a.article_id
-        WHERE ka.keyword_id = ANY($2::bigint[])
-          AND COALESCE(a.is_deleted, false) = false
-      `);
-    }
-
-    const projectScopeQuery = projectArticlesCTE.length > 0 
-      ? projectArticlesCTE.join(' UNION ') 
-      : 'SELECT article_id FROM "Article" WHERE COALESCE(is_deleted, false) = false';
+    const projectScopeQuery = `SELECT article_id FROM "Project_Article_Scope" WHERE project_id = $1`;
 
     const customWhereClause = customFilters.length > 0 ? `AND ${customFilters.join(' AND ')}` : '';
 

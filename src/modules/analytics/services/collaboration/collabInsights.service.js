@@ -117,32 +117,8 @@ export async function getCollaborationMetrics(projectId, filters = {}) {
       
       // Project Scope topics / keywords
       if (scopeCategoryIds.length > 0 || scopeKeywordIds.length > 0) {
-        const scopeSelects = [];
-        if (scopeCategoryIds.length > 0) {
-          params.push(scopeCategoryIds);
-          const catIdx = params.length;
-          scopeSelects.push(`
-            SELECT a.article_id
-            FROM "Article" a
-            JOIN "Topic" t ON a.primary_topic = t.topic_id
-            WHERE t.subject_category_id = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
-            UNION
-            SELECT st.article_id
-            FROM "Sub_Topic" st
-            JOIN "Topic" t ON st.topic_id = t.topic_id
-            WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
-          `);
-        }
-        if (scopeKeywordIds.length > 0) {
-          params.push(scopeKeywordIds);
-          const kwIdx = params.length;
-          scopeSelects.push(`
-            SELECT article_id
-            FROM "Keyword_Article"
-            WHERE keyword_id = ANY($${kwIdx}::bigint[])
-          `);
-        }
-        cteParts.push(`project_articles AS (${scopeSelects.join(' UNION ')})`);
+        params.push(projectId);
+        cteParts.push(`project_articles AS (SELECT article_id FROM "Project_Article_Scope" WHERE project_id = $${params.length})`);
       }
 
       // Custom Subject Area Filter

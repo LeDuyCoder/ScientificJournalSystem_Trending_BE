@@ -120,30 +120,8 @@ export async function getNetworkTopology(options = {}) {
     const params = [];
 
     // 1. Project Scope topics / keywords
-    const scopeSelects = [];
-    if (projectTopicIds.length > 0) {
-      params.push(projectTopicIds);
-      const catIdx = params.length;
-      scopeSelects.push(`
-        SELECT a.article_id
-        FROM "Article" a
-        WHERE a.primary_topic = ANY($${catIdx}::bigint[]) AND COALESCE(a.is_deleted, false) = false
-        UNION
-        SELECT st.article_id
-        FROM "Sub_Topic" st
-        WHERE st.topic_id = ANY($${catIdx}::bigint[])
-      `);
-    }
-    if (projectKwIds.length > 0) {
-      params.push(projectKwIds);
-      const kwIdx = params.length;
-      scopeSelects.push(`
-        SELECT article_id
-        FROM "Keyword_Article"
-        WHERE keyword_id = ANY($${kwIdx}::bigint[])
-      `);
-    }
-    cteParts.push(`project_scope AS (${scopeSelects.join(' UNION ')})`);
+    params.push(project_id);
+    cteParts.push(`project_scope AS (SELECT article_id FROM "Project_Article_Scope" WHERE project_id = $${params.length})`);
 
     // 2. Client filter: subject_area
     if (filterTopicIds.length > 0) {
