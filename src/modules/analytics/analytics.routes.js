@@ -1,8 +1,7 @@
 
 
-import {
-  validateQuery
-} from './analytics.validator.js';
+import { validateQuery } from './analytics.validator.js';
+import jobRoutes from './job.routes.js';
 import {
   getTrendsSchema,
   getFrontierSchema,
@@ -2061,4 +2060,6 @@ fastify.delete('/project-keywords/:keyword_id', { preHandler: [validateQuery(get
  */
 fastify.get('/tracked-journals', { preHandler: [validateQuery(getProjectKeywordsSchema)] }, fetchTrackedJournals);
 
+  // Register Job routes
+  fastify.register(jobRoutes);
 }

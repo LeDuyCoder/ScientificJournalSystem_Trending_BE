@@ -15,77 +15,34 @@ export async function getCitationMirroringData(scope, timeframeQuery) {
     }
 
     try {
-      let params = [from_year, to_year];
-      let scopeFilter = '';
+      let params = [];
+      let joins = '';
+      let condition = '';
 
       if (scope.hasProject && scope.projectCategoryIds.length > 0) {
-        scopeFilter = `
-          WITH target_topics AS (
-            SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($3::bigint[])
-          ),
-          target_articles AS (
-            SELECT article_id, publication_year
-            FROM "Article"
-            WHERE primary_topic IN (SELECT topic_id FROM target_topics)
-              AND coalesce(is_deleted, false) = false
-              AND publication_year >= $1 AND publication_year <= $2
-            UNION
-            SELECT a.article_id, a.publication_year
-            FROM "Sub_Topic" st
-            JOIN "Article" a ON st.article_id = a.article_id
-            WHERE st.topic_id IN (SELECT topic_id FROM target_topics)
-              AND coalesce(a.is_deleted, false) = false
-              AND a.publication_year >= $1 AND a.publication_year <= $2
-          )
-        `;
-        params.push(scope.projectCategoryIds);
+        joins = `JOIN "Topic" t ON aty.topic_id = t.topic_id`;
+        condition = `t.subject_category_id = ANY($1::bigint[]) AND aty.year >= $2 AND aty.year <= $3`;
+        params = [scope.projectCategoryIds, from_year, to_year];
       } else if (scope.mappedDomain && scope.mappedDomain !== 'all') {
-        scopeFilter = `
-          WITH target_topics AS (
-            SELECT t.topic_id FROM "Topic" t
-            JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
-            JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id
-            WHERE LOWER(sa.display_name) = LOWER($3)
-          ),
-          target_articles AS (
-            SELECT article_id, publication_year
-            FROM "Article"
-            WHERE primary_topic IN (SELECT topic_id FROM target_topics)
-              AND coalesce(is_deleted, false) = false
-              AND publication_year >= $1 AND publication_year <= $2
-            UNION
-            SELECT a.article_id, a.publication_year
-            FROM "Sub_Topic" st
-            JOIN "Article" a ON st.article_id = a.article_id
-            WHERE st.topic_id IN (SELECT topic_id FROM target_topics)
-              AND coalesce(a.is_deleted, false) = false
-              AND a.publication_year >= $1 AND a.publication_year <= $2
-          )
-        `;
-        params.push(scope.mappedDomain);
+        joins = `JOIN "Topic" t ON aty.topic_id = t.topic_id
+                 JOIN "Subject_Category" sc ON t.subject_category_id = sc.subject_category_id
+                 JOIN "Subject_Area" sa ON sc.subject_area_id = sa.subject_area_id`;
+        condition = `LOWER(sa.display_name) = LOWER($1) AND aty.year >= $2 AND aty.year <= $3`;
+        params = [scope.mappedDomain, from_year, to_year];
       } else {
-        scopeFilter = `
-          WITH target_articles AS (
-            SELECT article_id, publication_year
-            FROM "Article"
-            WHERE coalesce(is_deleted, false) = false
-              AND publication_year >= $1 AND publication_year <= $2
-          )
-        `;
+        condition = `aty.year >= $1 AND aty.year <= $2`;
+        params = [from_year, to_year];
       }
 
-      // We approximate self vs external citations since finding true author intersections 
-      // in Postgres dynamically is incredibly slow for millions of articles.
-      // 80% external, 20% self as a statistical model if the exact graph traversal is disabled.
       const sql = `
-        ${scopeFilter}
         SELECT 
-          ta.publication_year AS year,
-          COUNT(ta.article_id)::integer AS total_count,
-          SUM(a.citation_count)::integer AS total_citations
-        FROM target_articles ta
-        JOIN "Article" a ON ta.article_id = a.article_id
-        GROUP BY ta.publication_year
+          aty.year AS year,
+          SUM(aty.article_count)::integer AS total_count,
+          SUM(aty.citation_count)::integer AS total_citations
+        FROM "analytics_topic_year" aty
+        ${joins}
+        WHERE ${condition}
+        GROUP BY aty.year
       `;
 
       const result = await pool.query(sql, params);
