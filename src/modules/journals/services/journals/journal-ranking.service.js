@@ -8,11 +8,39 @@ const CACHE_KEY_PREFIX = 'analytics:journal-ranking:v2';
 const CACHE_TTL = 43200; // 12 hours // 1 hour
 
 export async function getJournalRanking(filters) {
-  const { project_id: projectId, subject_area: subjectArea, keywords, from_year: fromYear, to_year: toYear, page = 1, limit = 10 } = filters;
+  const projectId = filters.project_id || filters.projectId;
+  const subjectArea = filters.subject_area || filters.subjectArea;
+  const keywords = filters.keywords;
+  const fromYear = filters.from_year || filters.fromYear;
+  const toYear = filters.to_year || filters.toYear;
+  const page = filters.page || 1;
+  const limit = filters.limit || 10;
 
   const pageNum = Math.max(1, Number(page));
   const limitNum = Math.max(1, Number(limit));
   const offset = (pageNum - 1) * limitNum;
+
+  const quickCacheKey = `${CACHE_KEY_PREFIX}:fast:${projectId || 'all'}:${subjectArea || 'all'}:${keywords || 'all'}:${fromYear || ''}:${toYear || ''}`;
+
+  try {
+    const cachedFull = await redisGet(quickCacheKey);
+    if (cachedFull) {
+      const full = JSON.parse(cachedFull);
+      const journals = (full.allJournals || []).slice(offset, offset + limitNum);
+      return {
+        journals,
+        pagination: {
+          totalCount: full.totalCount || full.allJournals?.length || 0,
+          page: pageNum,
+          limit: limitNum,
+          totalPages: Math.ceil((full.totalCount || full.allJournals?.length || 0) / limitNum)
+        },
+        summary: full.summary
+      };
+    }
+  } catch (e) {
+    console.warn('Redis error:', e);
+  }
 
   const queryParams = {
     project_id: projectId,
@@ -21,17 +49,6 @@ export async function getJournalRanking(filters) {
   };
 
   const scope = await getResolvedScope(queryParams);
-
-  const cacheKey = `${CACHE_KEY_PREFIX}:${scope.resolvedProjectId || 'all'}:${scope.mappedDomain}:${scope.projectCategoryIds.join(',')}:${fromYear || ''}:${toYear || ''}:${pageNum}:${limitNum}`;
-
-
-
-  try {
-    const cached = await redisGet(cacheKey);
-    if (cached) return JSON.parse(cached);
-  } catch (e) {
-    console.warn('Redis error:', e);
-  }
 
   const result = await (async () => {
     try {
@@ -51,22 +68,13 @@ export async function getJournalRanking(filters) {
       const yearFilter = toYear ? `AND jr.year <= ${Number(toYear)}` : '';
       const yearPrevFilter = toYear ? `AND jr.year <= ${Number(toYear) - 1}` : `AND jr.year <= ${new Date().getFullYear() - 1}`;
 
-      if (scope.hasProject && scope.projectCategoryIds.length > 0) {
+      if (scope.hasProject && scope.resolvedProjectId) {
         articleFilter = `
-          WITH target_topics AS (
-            SELECT topic_id FROM "Topic" WHERE subject_category_id = ANY($${params.length + 1}::bigint[])
-          ),
-          project_articles_issues AS (
-            SELECT issue_id, article_id
-            FROM "Article" a
-            WHERE primary_topic IN (SELECT topic_id FROM target_topics)
-              AND coalesce(is_deleted, false) = false
-              ${yearSql}
-            UNION
+          WITH project_articles_issues AS (
             SELECT a.issue_id, a.article_id
-            FROM "Sub_Topic" st
-            JOIN "Article" a ON st.article_id = a.article_id
-            WHERE st.topic_id IN (SELECT topic_id FROM target_topics)
+            FROM "Project_Article_Scope" pas
+            JOIN "Article" a ON pas.article_id = a.article_id
+            WHERE pas.project_id = $${params.length + 1}
               AND coalesce(a.is_deleted, false) = false
               ${yearSql}
           ),
@@ -85,7 +93,7 @@ export async function getJournalRanking(filters) {
             GROUP BY v.journal_id
           )
         `;
-        params.push(scope.projectCategoryIds);
+        params.push(scope.resolvedProjectId);
       } else if (scope.mappedDomain && scope.mappedDomain !== 'all') {
         articleFilter = `
           WITH target_topics AS (
@@ -143,11 +151,6 @@ export async function getJournalRanking(filters) {
         `;
       }
 
-      const limitParamIdx = params.length + 1;
-      params.push(limitNum);
-      const offsetParamIdx = params.length + 1;
-      params.push(offset);
-
       const sql = `
         ${articleFilter},
         journal_metrics_raw AS (
@@ -185,12 +188,12 @@ export async function getJournalRanking(filters) {
         journal_trends AS (
           SELECT journal_id, STRING_AGG(value_float::text, ',' ORDER BY year ASC) AS trend_str FROM journal_trend_raw GROUP BY journal_id
         ),
-        journal_page AS (
+        all_ranked_journals AS (
           SELECT 
             js.journal_id AS id, j.display_name AS name, COALESCE(p.display_name, 'Unknown') AS publisher,
             COALESCE(j.issn, 'N/A') AS issn, COALESCE(jm.impact_factor, 0) AS "impactFactor",
             COALESCE(jq.sjr_rank, 'Q4') AS "sjrRank", jt.trend_str AS "trendStr",
-            js.article_count, COUNT(*) OVER() AS total_count
+            js.article_count
           FROM journal_stats js
           JOIN "Journal" j ON js.journal_id = j.journal_id
           LEFT JOIN "Publisher" p ON j.publisher_id = p.publisher_id
@@ -199,7 +202,6 @@ export async function getJournalRanking(filters) {
           LEFT JOIN journal_trends jt ON js.journal_id = jt.journal_id
           WHERE COALESCE(j.is_deleted, false) = false
           ORDER BY "impactFactor" DESC, js.article_count DESC, j.display_name ASC
-          LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
         ),
         distinct_journals AS (SELECT journal_id FROM journal_stats),
         journal_metrics_current AS (
@@ -221,18 +223,18 @@ export async function getJournalRanking(filters) {
             (SELECT COUNT(*) FROM distinct_journals) AS total_journals
         )
         SELECT 
-          (SELECT json_agg(row_to_json(jp)) FROM journal_page jp) AS journals,
+          (SELECT json_agg(row_to_json(jp)) FROM all_ranked_journals jp) AS journals,
           (SELECT row_to_json(js) FROM journal_summary js) AS summary;
       `;
 
-      const result = await pool.query(sql, params);
-      const row = result.rows[0];
-      const journalsData = row.journals || [];
+      const dbRes = await pool.query(sql, params);
+      const row = dbRes.rows[0];
+      const rawJournals = row.journals || [];
       const summaryData = row.summary || {};
       
-      const totalCount = journalsData.length > 0 ? Number(journalsData[0].total_count) : 0;
+      const totalCount = rawJournals.length;
       
-      const journals = journalsData.map(j => ({
+      const allJournals = rawJournals.map(j => ({
         id: j.id,
         name: j.name,
         publisher: j.publisher,
@@ -252,15 +254,20 @@ export async function getJournalRanking(filters) {
         percentageChange = '+100.0%';
       }
 
+      const summary = {
+        averageImpactFactor: Math.round(avgCurrent * 100) / 100,
+        percentageChange,
+        trackedCount: Number(summaryData.total_journals || 0),
+        limit: 150
+      };
+
+      // Save full project ranked list to Redis cache for instant sub-page navigation
+      await redisSet(quickCacheKey, JSON.stringify({ allJournals, totalCount, summary }), CACHE_TTL).catch(e => console.warn(e));
+
       return {
-        journals,
+        journals: allJournals.slice(offset, offset + limitNum),
         pagination: { totalCount, page: pageNum, limit: limitNum, totalPages: Math.ceil(totalCount / limitNum) },
-        summary: {
-          averageImpactFactor: Math.round(avgCurrent * 100) / 100,
-          percentageChange,
-          trackedCount: Number(summaryData.total_journals || 0),
-          limit: 150
-        }
+        summary
       };
     } catch (error) {
       logger.error('Error fetching journal ranking:', error);
@@ -269,6 +276,5 @@ export async function getJournalRanking(filters) {
     }
   })();
 
-  await redisSet(cacheKey, JSON.stringify(result), CACHE_TTL).catch(e => console.warn(e));
   return result;
 }
