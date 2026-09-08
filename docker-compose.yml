@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   trending-backend:
-    image: ghcr.io/researchpulse/scientificjournalsystem-trending-be:latest
+    image: ghcr.io/researchpulse/scientificjournalsystem_trending_be:latest
     container_name: researchpulse_trending_backend
     restart: unless-stopped
     ports:

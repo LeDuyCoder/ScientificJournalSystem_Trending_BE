@@ -134,7 +134,7 @@ export async function getTopicIntensityMatrix(options = {}) {
     
     // Project Scope topics / keywords
     if (scopeCategoryIds.length > 0 || scopeKeywordIds.length > 0) {
-      params.push(projectId);
+      params.push(project_id);
       cteParts.push(`project_articles AS (SELECT article_id FROM "Project_Article_Scope" WHERE project_id = $${params.length})`);
     }
 
