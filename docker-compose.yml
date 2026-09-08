@@ -2,11 +2,11 @@ version: '3.8'
 
 services:
   trending-backend:
-    image: ghcr.io/leduycoder/scientificjournalsystem-trending-be:latest
+    image: ghcr.io/researchpulse/scientificjournalsystem-trending-be:latest
     container_name: researchpulse_trending_backend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3000:3000" 
     env_file:
       - .env
     networks:
