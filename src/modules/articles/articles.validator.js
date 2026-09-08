@@ -6,24 +6,28 @@ import { z } from 'zod';
  * @returns {import('express').RequestHandler} 
  */
 function validateQuery(schema) {
-  return (req, res, next) => {
+  return (req, reply, done) => {
     try {
-      // Phân tích và xác thực req.query
       const parsedQuery = schema.parse(req.query);
-      // Gán query đã được xác thực và chuyển đổi vào req.validatedQuery
-      // để controller có thể sử dụng một cách an toàn.
       req.validatedQuery = parsedQuery;
-      next();
+      if (typeof done === 'function') done();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({
+        const payload = {
           code: 400,
           message: 'Validation error',
           errors: error.flatten().fieldErrors,
-        });
+        };
+        if (reply && typeof reply.status === 'function') {
+          if (typeof reply.send === 'function') {
+            return reply.status(400).send(payload);
+          } else if (typeof reply.json === 'function') {
+            return reply.status(400).json(payload);
+          }
+        }
       }
-      // Chuyển các lỗi khác cho error handler chung
-      next(error);
+      if (typeof done === 'function') done(error);
+      else throw error;
     }
   };
 }
