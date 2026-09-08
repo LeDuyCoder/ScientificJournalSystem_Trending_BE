@@ -25,24 +25,29 @@ function parseFilterArray(val) {
  * @returns {import('express').RequestHandler}
  */
 export function validateQuery(schema) {
-  return (req, res, next) => {
+  return (req, reply, done) => {
     try {
       // Phân tích và xác thực req.query
       const parsedQuery = schema.parse(req.query);
-      // Gán lại query đã được xác thực và chuyển đổi vào req.validatedQuery
-      // để controller có thể sử dụng một cách an toàn.
       req.validatedQuery = parsedQuery;
-      next();
+      if (typeof done === 'function') done();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({
+        const payload = {
           code: 400,
           message: 'Validation error',
-          errors: error.flatten().fieldErrors, // Giữ nguyên format lỗi hiện tại
-        });
+          errors: error.flatten().fieldErrors,
+        };
+        if (reply && typeof reply.status === 'function') {
+          if (typeof reply.send === 'function') {
+            return reply.status(400).send(payload);
+          } else if (typeof reply.json === 'function') {
+            return reply.status(400).json(payload);
+          }
+        }
       }
-      // Chuyển các lỗi khác cho error handler chung
-      next(error);
+      if (typeof done === 'function') done(error);
+      else throw error;
     }
   };
 }
@@ -68,7 +73,7 @@ const yearRangeMessage = {
 // Schema cho /analytics/top-entities
 export const getTopEntitiesSchema = z.object({
   project_id: z.string().min(1, 'project_id is required'),
-  entity_type: z.enum(['institution', 'university', 'research_center']).optional(),
+  entity_type: z.enum(['institution', 'university', 'research_center', 'author', 'institutions', 'authors']).optional(),
   from_year: z.coerce.number().int().optional(),
   to_year: z.coerce.number().int().optional(),
   limit: z.coerce.number().int().positive().max(50).optional().default(10),
