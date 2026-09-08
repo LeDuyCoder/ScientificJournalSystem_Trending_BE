@@ -154,19 +154,16 @@ export async function getGeoDistribution(projectId, filters = {}) {
     }
     // --- END FAST PATH ---
 
-    // 1. Verify project exists
-    let projectCategoryIds = [];
-    let projectKeywordIds = [];
-    
+    const params = [];
+    const sqlFilters = [];
+
     let useCte = false;
     if (hasProjectFilter) {
       useCte = true;
-      const pId = typeof project_id !== 'undefined' ? project_id : (typeof projectId !== 'undefined' ? projectId : null);
+      const pId = typeof projectId !== 'undefined' ? projectId : null;
       if (pId) {
         params.push(pId);
-        if (typeof sqlFilters !== 'undefined') {
-          sqlFilters.push(`pas.project_id = $${params.length}`);
-        }
+        sqlFilters.push(`pas.project_id = $${params.length}`);
       }
     }
 
@@ -241,11 +238,11 @@ export async function getGeoDistribution(projectId, filters = {}) {
     }
 
     // Client custom filter: year range
-    if (fromYear !== undefined && fromYear !== null) {
+    if (fromYear !== undefined && fromYear !== null && fromYear !== '') {
       params.push(Number(fromYear));
       sqlFilters.push(`a.publication_year >= $${params.length}`);
     }
-    if (toYear !== undefined && toYear !== null) {
+    if (toYear !== undefined && toYear !== null && toYear !== '') {
       params.push(Number(toYear));
       sqlFilters.push(`a.publication_year <= $${params.length}`);
     }
@@ -259,7 +256,7 @@ export async function getGeoDistribution(projectId, filters = {}) {
       const countryIndex = params.length;
 
       querySql = `
-        WITH ${useCte ? cteSql : ''} FilteredArticles AS (
+        WITH FilteredArticles AS (
             SELECT a.article_id, a.issue_id
             FROM "Article" a
             ${useCte ? 'JOIN "Project_Article_Scope" pas ON a.article_id = pas.article_id' : ''}
@@ -289,7 +286,7 @@ export async function getGeoDistribution(projectId, filters = {}) {
       `;
     } else {
       querySql = `
-        WITH ${useCte ? cteSql : ''} FilteredArticles AS (
+        WITH FilteredArticles AS (
             SELECT a.article_id, a.issue_id
             FROM "Article" a
             ${useCte ? 'JOIN "Project_Article_Scope" pas ON a.article_id = pas.article_id' : ''}

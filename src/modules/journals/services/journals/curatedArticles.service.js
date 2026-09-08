@@ -38,66 +38,84 @@ export async function getCuratedArticles(projectId, options = {}) {
 
   try {
     // 1. Resolve Project Scope
-    const projectRes = await client.query(
-      `SELECT project_id, subject_area FROM "Project" WHERE project_id = $1`,
+    const scopeCheck = await client.query(
+      `SELECT 1 FROM "Project_Article_Scope" WHERE project_id = $1 LIMIT 1`,
       [projectId]
     );
-    if (projectRes.rows.length === 0) {
-      return { total: 0, items: [], totalPages: 0, currentPage: page };
-    }
-    const projectSubjectAreaId = projectRes.rows[0].subject_area;
 
-    const categoriesRes = await client.query(
-      `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
-      [projectSubjectAreaId]
-    );
-    const scopeCategoryIds = categoriesRes.rows.map(r => Number(r.subject_category_id));
-
-    const keywordsRes = await client.query(
-      `SELECT keyword_id FROM "Project_Keyword" WHERE project_id = $1`,
-      [projectId]
-    );
-    const scopeKeywordIds = keywordsRes.rows.map(r => Number(r.keyword_id));
-
-    if (scopeCategoryIds.length === 0 && scopeKeywordIds.length === 0) {
-      return { total: 0, items: [], totalPages: 0, currentPage: page };
-    }
-
+    let projectScopeQuery = '';
     const params = [];
-    const projectArticlesCTE = [];
 
-    if (scopeCategoryIds.length > 0) {
-      params.push(scopeCategoryIds);
-      const catIdx = params.length;
-      projectArticlesCTE.push(`
-        SELECT a.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
-        FROM "Article" a
-        JOIN "Topic" t ON a.primary_topic = t.topic_id
-        WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+    if (scopeCheck.rows.length > 0) {
+      params.push(projectId);
+      projectScopeQuery = `
+        SELECT pas.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
+        FROM "Project_Article_Scope" pas
+        JOIN "Article" a ON pas.article_id = a.article_id
+        WHERE pas.project_id = $${params.length}
           AND COALESCE(a.is_deleted, false) = false
-        UNION
-        SELECT a.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
-        FROM "Sub_Topic" st
-        JOIN "Topic" t ON st.topic_id = t.topic_id
-        JOIN "Article" a ON st.article_id = a.article_id
-        WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
-          AND COALESCE(a.is_deleted, false) = false
-      `);
+      `;
+    } else {
+      const projectRes = await client.query(
+        `SELECT project_id, subject_area FROM "Project" WHERE project_id = $1`,
+        [projectId]
+      );
+      if (projectRes.rows.length === 0) {
+        return { total: 0, items: [], totalPages: 0, currentPage: page };
+      }
+      const projectSubjectAreaId = projectRes.rows[0].subject_area;
+
+      const categoriesRes = await client.query(
+        `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
+        [projectSubjectAreaId]
+      );
+      const scopeCategoryIds = categoriesRes.rows.map(r => Number(r.subject_category_id));
+
+      const keywordsRes = await client.query(
+        `SELECT keyword_id FROM "Project_Keyword" WHERE project_id = $1`,
+        [projectId]
+      );
+      const scopeKeywordIds = keywordsRes.rows.map(r => Number(r.keyword_id));
+
+      if (scopeCategoryIds.length === 0 && scopeKeywordIds.length === 0) {
+        return { total: 0, items: [], totalPages: 0, currentPage: page };
+      }
+
+      const projectArticlesCTE = [];
+
+      if (scopeCategoryIds.length > 0) {
+        params.push(scopeCategoryIds);
+        const catIdx = params.length;
+        projectArticlesCTE.push(`
+          SELECT a.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
+          FROM "Article" a
+          JOIN "Topic" t ON a.primary_topic = t.topic_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+            AND COALESCE(a.is_deleted, false) = false
+          UNION
+          SELECT a.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
+          FROM "Sub_Topic" st
+          JOIN "Topic" t ON st.topic_id = t.topic_id
+          JOIN "Article" a ON st.article_id = a.article_id
+          WHERE t.subject_category_id = ANY($${catIdx}::bigint[])
+            AND COALESCE(a.is_deleted, false) = false
+        `);
+      }
+
+      if (scopeKeywordIds.length > 0) {
+        params.push(scopeKeywordIds);
+        const kwIdx = params.length;
+        projectArticlesCTE.push(`
+          SELECT ka.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
+          FROM "Keyword_Article" ka
+          JOIN "Article" a ON ka.article_id = a.article_id
+          WHERE ka.keyword_id = ANY($${kwIdx}::bigint[])
+            AND COALESCE(a.is_deleted, false) = false
+        `);
+      }
+
+      projectScopeQuery = projectArticlesCTE.join(' UNION ');
     }
-
-    if (scopeKeywordIds.length > 0) {
-      params.push(scopeKeywordIds);
-      const kwIdx = params.length;
-      projectArticlesCTE.push(`
-        SELECT ka.article_id, a.primary_topic, a.issue_id, a.publication_year, a.created_at
-        FROM "Keyword_Article" ka
-        JOIN "Article" a ON ka.article_id = a.article_id
-        WHERE ka.keyword_id = ANY($${kwIdx}::bigint[])
-          AND COALESCE(a.is_deleted, false) = false
-      `);
-    }
-
-    const projectScopeQuery = projectArticlesCTE.join(' UNION ');
 
     // 2. Build Custom Filters
     const articleFilters = [];
@@ -139,15 +157,28 @@ export async function getCuratedArticles(projectId, options = {}) {
 
     const whereClause = articleFilters.length > 0 ? `AND ${articleFilters.join(' AND ')}` : '';
 
-    // 3. Get total count
-    const countQuery = `
-      WITH project_articles AS ( ${projectScopeQuery} )
-      SELECT COUNT(a.article_id) as total
-      FROM project_articles a
-      WHERE 1=1 ${whereClause}
-    `;
-    const countRes = await client.query(countQuery, params);
-    const total = Number(countRes.rows[0].total) || 0;
+    // 3. Get total count (cached separately to avoid re-counting on each page switch)
+    const countCacheKey = `analytics:curated-articles:count:${projectId}:${subject_area || ''}:${keywords || ''}:${from_year || ''}:${to_year || ''}:${is_open_access || ''}`;
+    let total = null;
+    try {
+      const cachedCount = await redisGet(countCacheKey);
+      if (cachedCount !== null && cachedCount !== undefined) {
+        total = Number(cachedCount);
+      }
+    } catch {}
+
+    if (total === null) {
+      const countQuery = `
+        WITH project_articles AS ( ${projectScopeQuery} )
+        SELECT COUNT(a.article_id) as total
+        FROM project_articles a
+        WHERE 1=1 ${whereClause}
+      `;
+      const countRes = await client.query(countQuery, params);
+      total = Number(countRes.rows[0].total) || 0;
+      await redisSet(countCacheKey, String(total), CACHE_TTL).catch(e => console.warn(e));
+    }
+
     const totalPages = Math.ceil(total / limit);
 
     if (total === 0) {
