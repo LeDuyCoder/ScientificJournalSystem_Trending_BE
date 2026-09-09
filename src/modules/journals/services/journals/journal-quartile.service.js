@@ -4,7 +4,7 @@ import { fetchWithCache } from '../../../analytics/services/analytics/cache.serv
 import { getResolvedScope } from '../../../analytics/services/analytics/scope.repository.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-quartiles:v2';
-const CACHE_TTL = 43200; // 12 hours
+const CACHE_TTL = 300; // 5 minutes
 
 export async function getJournalQuartileDistribution(query) {
   let { project_id, subject_area, keywords, from_year, to_year } = query;

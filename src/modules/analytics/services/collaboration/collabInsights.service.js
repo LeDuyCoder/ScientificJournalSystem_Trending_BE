@@ -4,7 +4,7 @@ import { fetchWithCache } from '../analytics/cache.service.js';
 import pool from '../../../../config/database.js';
 
 const COLLAB_METRICS_CACHE_PREFIX = 'analytics:collab-metrics:v1';
-const COLLAB_METRICS_CACHE_TTL = 43200; // 12 hours
+const COLLAB_METRICS_CACHE_TTL = 300; // 5 minutes
 
 /**
  * Service to generate collaboration insights dynamically.
