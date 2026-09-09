@@ -4,7 +4,7 @@ import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.
 import { getProjectScope } from '../../../analytics/services/trends/forecast.service.js';
 
 const CACHE_KEY_PREFIX = 'dashboard:search';
-const CACHE_TTL = 43200; // 12 hours // 1 minute (short cache for dynamic suggestions)
+const CACHE_TTL = 300; // 5 minutes
 
 /**
  * Fetch search suggestions based on prefix/partial matching and entity type.

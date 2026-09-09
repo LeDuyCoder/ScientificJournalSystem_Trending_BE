@@ -3,7 +3,7 @@ import logger from '../../../../utils/logger.js';
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 
 const CACHE_KEY_PREFIX = 'matrix:intensity:v2';
-const CACHE_TTL = 43200; // 12 hours // 10 minutes
+const CACHE_TTL = 300; // 5 minutes
 
 /**
  * Parse comma-separated keywords into clean array.

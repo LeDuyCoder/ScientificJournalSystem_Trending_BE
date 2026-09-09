@@ -8,7 +8,7 @@ import { fetchWithCache } from './cache.service.js';
 import logger from '../../../../utils/logger.js';
 
 const CACHE_KEY_PREFIX = 'analytics:development-trends:v1';
-const CACHE_TTL = 43200; // 12 hours
+const CACHE_TTL = 300; // 5 minutes
 
 function parseTimeframe(timeframe) {
   const currentYear = new Date().getFullYear();

@@ -4,7 +4,7 @@ import { fetchWithCache } from '../analytics/cache.service.js';
 import { getResolvedScope } from '../analytics/scope.repository.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-impact:v2';
-const CACHE_TTL = 43200; // 12 hours
+const CACHE_TTL = 300; // 5 minutes
 
 export async function getImpactMatrixData(query) {
   let { project_id, subject_area, keywords, year } = query;

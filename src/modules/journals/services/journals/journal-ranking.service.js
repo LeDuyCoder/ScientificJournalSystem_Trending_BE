@@ -5,7 +5,7 @@ import { getResolvedScope } from '../../../analytics/services/analytics/scope.re
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-ranking:v2';
-const CACHE_TTL = 43200; // 12 hours // 1 hour
+const CACHE_TTL = 300; // 5 minutes
 
 export async function getJournalRanking(filters) {
   const projectId = filters.project_id || filters.projectId;

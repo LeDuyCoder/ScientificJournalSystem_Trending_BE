@@ -9,7 +9,7 @@ import logger from '../../../../utils/logger.js';
  * Heavily cached.
  */
 
-const SCOPE_TTL = 3600; // 1 hour
+const SCOPE_TTL = 300; // 5 minutes
 
 export async function getResolvedScope(query) {
   const { project_id, domain, subject_category } = query;

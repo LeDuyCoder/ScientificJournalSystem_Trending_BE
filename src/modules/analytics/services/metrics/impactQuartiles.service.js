@@ -4,7 +4,7 @@ import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.
 
 // Cache configuration
 const CACHE_KEY_PREFIX = 'analytics:impact-quartiles';
-const CACHE_TTL = 43200; // 12 hours // 5 minutes
+const CACHE_TTL = 300; // 5 minutes
 
 /**
  * Main service to get geographical distribution analytics for a project with optional filters.

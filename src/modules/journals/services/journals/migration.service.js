@@ -5,7 +5,7 @@ import { getResolvedScope } from '../../../analytics/services/analytics/scope.re
 import { normalizeSourceModel, normalizeTargetModel, buildInitialMigrationFlow, calculateTransitionRate } from '../../../../utils/accessModel.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-migration:v2';
-const CACHE_TTL = 43200; // 12 hours
+const CACHE_TTL = 300; // 5 minutes
 
 export async function getJournalMigrationAnalysis(query) {
   let { project_id, subject_area, keywords, from_year, to_year, include_legacy } = query;
