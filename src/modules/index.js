@@ -4,7 +4,7 @@ import dashboardRoutes from './dashboard/dashboard.routes.js';
 import searchRoutes from './search/search.routes.js';
 import chatRoutes from './chat/chat.routes.js';
 
-export default async function (fastify, opts) {
+export default async function (fastify) {
   fastify.register(articlesRoutes, { prefix: '/articles' });
   fastify.register(analyticsRoutes, { prefix: '/analytics' });
   fastify.register(dashboardRoutes, { prefix: '/dashboard' });

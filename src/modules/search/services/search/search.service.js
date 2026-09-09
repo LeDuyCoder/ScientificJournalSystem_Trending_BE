@@ -981,20 +981,6 @@ const BRANCH_BUILDERS = {
   topic: buildTopicQuery,
 };
 
-function getOrderBy(sort) {
-  switch (sort) {
-    case 'year_desc':
-      return 'publication_year DESC NULLS LAST, relevance DESC, citation_count DESC NULLS LAST, title ASC';
-    case 'citations_desc':
-      return 'citation_count DESC NULLS LAST, relevance DESC, publication_year DESC NULLS LAST, title ASC';
-    case 'name_asc':
-      return 'title ASC, relevance DESC, publication_year DESC NULLS LAST';
-    case 'relevance':
-    default:
-      return 'relevance DESC, citation_count DESC NULLS LAST, publication_year DESC NULLS LAST, title ASC';
-  }
-}
-
 function normalizeCounts(rawCounts = {}, selectedTypes) {
   const counts = {};
   for (const type of selectedTypes) {
@@ -1330,8 +1316,6 @@ export async function searchEntities(filters) {
       fromYear: filters.from_year,
       toYear: filters.to_year,
     };
-
-    const orderBy = getOrderBy(sort);
 
     let rawCounts = {};
     let total = 0;

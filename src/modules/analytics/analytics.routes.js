@@ -29,7 +29,6 @@ import {
   fetchForecast,
   getTopEntitiesHandler,
   fetchGeoDistribution,
-  fetchImpactQuartiles,
   fetchJournalQuartileDistribution,
   fetchJournalRanking, 
   fetchImpactMatrix,
@@ -56,7 +55,7 @@ import {
   fetchTrackedJournals
 } from './analytics.controller.js';
 
-export default async function (fastify, opts) {
+export default async function (fastify) {
 
 /**
  * Get publication & citation historical trends for chart rendering.

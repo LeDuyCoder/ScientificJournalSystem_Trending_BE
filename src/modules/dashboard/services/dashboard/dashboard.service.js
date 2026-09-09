@@ -1,4 +1,3 @@
-import { neo4jDriver } from '../../../../config/neo4j.js';
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 import pool from '../../../../config/database.js';
 import { getProjectScope } from '../../../analytics/services/trends/forecast.service.js';
@@ -10,21 +9,6 @@ const CACHE_TTL = 43200; // 12 hours // 5 phút
 // CÁC HÀM TRỢ GIÚP (HELPERS)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Chuyển đổi an toàn một đối tượng Neo4j Integer / number / null → số JavaScript thông thường.
- * Trả về 0 nếu giá trị là null / undefined / NaN.
- *
- * Mô phỏng lại cơ chế normalizeNeo4jValue được sử dụng trong graph.service.js.
- *
- * @param {any} value
- * @returns {number}
- */
-function toSafeNumber(value) {
-    if (value === null || value === undefined) return 0;
-    // Đối tượng Neo4j Integer (có hàm .toNumber())
-    if (typeof value.toNumber === 'function') return value.toNumber() ?? 0;
-    return Number(value) || 0;
-}
 
 /**
  * Tính toán tỷ lệ tăng trưởng: growthRate = ((current - previous) / previous) * 100
@@ -100,91 +84,7 @@ function getPeriodBounds() {
  *   Articles, Journals, Authors, Citations (mối quan hệ REFERENCES).
  *
  * Kết quả được lưu tạm trong Redis trong vòng CACHE_TTL giây (mặc định: 5 phút).
- *
-/**
- * Chuẩn bị và phân loại các bộ lọc thành ID và Tên chữ thường (case-insensitive)
  */
-function prepareFilters(filters) {
-    const subjectArea = filters.subjectArea || '';
-    const keywords = filters.keywords || filters.keywordIds || [];
-
-    const processFilterArray = (arr) => {
-        const ids = [];
-        const namesLower = [];
-        for (const val of arr) {
-            if (val === undefined || val === null || val === '') continue;
-            if (typeof val === 'number') {
-                ids.push(val);
-            } else {
-                const str = String(val).trim();
-                const num = Number(str);
-                if (!Number.isNaN(num) && String(num) === str) {
-                    ids.push(num);
-                } else {
-                    namesLower.push(str.toLowerCase());
-                }
-                // Cũng đưa chuỗi gốc vào ids để hỗ trợ so khớp trực tiếp id kiểu chuỗi
-                ids.push(str);
-            }
-        }
-        return { ids, namesLower };
-    };
-
-    const kw = processFilterArray(keywords);
-
-    return {
-        subjectArea: typeof subjectArea === 'string' ? subjectArea.trim() : '',
-        keywordIds: kw.ids,
-        keywordNamesLower: kw.namesLower,
-    };
-}
-
-/**
- * Lấy số liệu thống kê dashboard từ Neo4j.
- *
- * Trả về tổng số tích lũy + tỷ lệ tăng trưởng (growthRate) theo tháng cho:
- *   Articles, Journals, Authors, Citations (mối quan hệ REFERENCES).
- *
- * Kết quả được lưu tạm trong Redis trong vòng CACHE_TTL giây (mặc định: 5 phút).
- *
- * @param {Object} [filters] - Bộ lọc tùy chọn để lọc dữ liệu theo Project.
- * @param {string} [filters.subjectArea] - Lĩnh vực theo dõi của dự án.
- * @param {string} [filters.projectId] - ID của project.
- * @returns {Promise<DashboardStats>}
- */
-
-function buildSubjectScopeSql(paramIndex) {
-    return `
-    (
-      EXISTS (
-        SELECT 1
-        FROM "Topic" primary_topic
-        WHERE primary_topic.topic_id = a.primary_topic
-          AND primary_topic.subject_category_id = ANY($${paramIndex}::bigint[])
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM "Sub_Topic" st
-        JOIN "Topic" sub_topic
-          ON st.topic_id = sub_topic.topic_id
-        WHERE st.article_id = a.article_id
-          AND sub_topic.subject_category_id = ANY($${paramIndex}::bigint[])
-      )
-    )
-  `;
-}
-
-function buildKeywordScopeSql(paramIndex) {
-    return `
-    EXISTS (
-      SELECT 1
-      FROM "Keyword_Article" ka
-      WHERE ka.article_id = a.article_id
-        AND ka.keyword_id = ANY($${paramIndex}::bigint[])
-    )
-  `;
-}
-
 export async function getDashboardStats(filters = {}) {
     const { projectId } = filters;
     const { currentYear, previousYear } = getPeriodBounds();

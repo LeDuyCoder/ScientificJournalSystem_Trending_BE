@@ -3,11 +3,9 @@ import logger from '../../../../utils/logger.js';
 import { buildRouterPrompt, buildSqlPrompt, buildFinalAnswerPrompt } from '../rag/prompts.js';
 import { getProjectScope } from '../../../analytics/services/trends/forecast.service.js';
 import { cleanGeneratedSql, validateSql } from '../../../../utils/sql_utils.js';
-import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 import { getProjectChatMessages } from './projectChatMessage.service.js';
 
 const MODEL_RAG_URL = process.env.URL_RAG_MODEL || 'http://localhost:11434/api/generate';
-const RAG_MODEL = process.env.OLLAMA_MODEL || process.env.RAG_MODEL || 'llama3.1:8b';
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'nomic-embed-text';
 const OLLAMA_EMBEDDING_URL = process.env.OLLAMA_EMBEDDING_URL || 'http://localhost:11434/api/embeddings';
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 300000); 
@@ -411,7 +409,7 @@ English search terms:`.trim();
             englishQuery: text,
             tokens: { promptTokens, completionTokens, totalTokens }
         };
-    } catch (e) {
+    } catch {
         return {
             englishQuery: userQuestion,
             tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }

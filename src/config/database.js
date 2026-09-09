@@ -8,7 +8,7 @@ const pool = new pg.Pool({
 
 export const checkPostgres = async () => {
   try {
-    const res = await prisma.$queryRaw`SELECT NOW()`;
+    await prisma.$queryRaw`SELECT NOW()`;
     logger.db(`Kết nối tới PostgreSQL (Prisma) thành công!`);
   } catch (err) {
     logger.error("Kết nối tới PostgreSQL thất bại!", err);

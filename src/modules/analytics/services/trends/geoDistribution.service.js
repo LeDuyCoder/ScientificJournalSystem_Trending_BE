@@ -147,7 +147,7 @@ export async function getGeoDistribution(projectId, filters = {}) {
 
         try {
           await redisSet(cacheKey, JSON.stringify(finalizedData), CACHE_TTL);
-        } catch (cacheErr) {}
+        } catch {}
 
         return finalizedData;
       }

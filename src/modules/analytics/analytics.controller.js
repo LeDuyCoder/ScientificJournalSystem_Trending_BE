@@ -3,10 +3,6 @@
  */
 import logger from '../../utils/logger.js';
 
-import pool from '../../config/database.js';
-
-import { z } from 'zod';
-import { getTopEntities } from '../dashboard/services/dashboard/analytics.service.js';
 import { getPublicationTrends } from './services/trends/trends.service.js';
 import { getFrontierTopics } from './services/trends/frontier.service.js';
 import { getDistribution } from './services/trends/distribution.service.js';
@@ -30,20 +26,6 @@ import { getCrossLinks } from './services/collaboration/crossLinks.service.js';
 import { getTemporalShift } from './services/trends/temporalShift.service.js';
 import { getCollaborationInsights, getCollaborationMetrics } from './services/collaboration/collabInsights.service.js';
 import { getCuratedArticles, getProjectKeywords, getTrackedJournals, addProjectKeyword, removeProjectKeyword } from '../journals/services/journals/curatedArticles.service.js';
-
-
-
-
-
-const getTopEntitiesSchema = z.object({
-  project_id: z.string().min(1, 'project_id is required'),
-  entity_type: z
-    .enum(['institution', 'university', 'research_center'])
-    .optional(),
-  from_year: z.coerce.number().int().optional(),
-  to_year: z.coerce.number().int().optional(),
-  limit: z.coerce.number().int().positive().max(50).optional().default(10),
-});
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -916,9 +898,9 @@ export async function exportCollaborationReport(request, reply) {
       csv += 'No network nodes available,,,\n';
     }
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="collaboration_analytics_report_${projectId}.csv"`);
-    return res.status(200).send(Buffer.from('\uFEFF' + csv, 'utf-8')); // Add BOM for Excel UTF-8 compatibility
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="collaboration_analytics_report_${projectId}.csv"`);
+    return reply.status(200).send(Buffer.from('\uFEFF' + csv, 'utf-8')); // Add BOM for Excel UTF-8 compatibility
   } catch (err) {
     logger.error(`Error exporting collaboration report: ${err.message}`, err);
     throw err;
@@ -927,7 +909,6 @@ export async function exportCollaborationReport(request, reply) {
 
 export async function exportCountryCollaborationMatrix(request, reply) {
   try {
-    const { project_id } = request.query;
     const data = await getCountryCollaborationChord(request.query);
     
     let csv = '\uFEFFSource Country,Target Country,Co-Authorship Count,Growth Rate\n';

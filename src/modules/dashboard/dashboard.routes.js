@@ -4,7 +4,7 @@ import { validateGetDashboardStats } from './dashboard.validator.js';
 import { fetchDashboardSearch } from '../analytics/analytics.controller.js';
 
 // Khởi tạo router của Express cho các endpoint liên quan đến dashboard
-export default async function (fastify, opts) {
+export default async function (fastify) {
 
 /**
  * Định nghĩa tài liệu Swagger OpenAPI cho endpoint lấy số liệu thống kê Dashboard.

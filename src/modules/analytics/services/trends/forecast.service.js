@@ -102,41 +102,6 @@ function getGrowthRates(yearlyMetrics) {
   return growthRates;
 }
 
-/**
- * Article không có subject_category_id trực tiếp.
- * Nên cần check qua:
- * Article.primary_topic -> Topic.subject_category_id
- * hoặc Sub_Topic -> Topic.subject_category_id
- */
-function buildSubjectScopeSql(paramIndex) {
-  return `
-    (
-      a.primary_topic IN (
-        SELECT topic_id
-        FROM "Topic"
-        WHERE subject_category_id = ANY($${paramIndex}::bigint[])
-      )
-      OR a.article_id IN (
-        SELECT st.article_id
-        FROM "Sub_Topic" st
-        JOIN "Topic" sub_topic
-          ON st.topic_id = sub_topic.topic_id
-        WHERE sub_topic.subject_category_id = ANY($${paramIndex}::bigint[])
-      )
-    )
-  `;
-}
-
-function buildKeywordScopeSql(paramIndex) {
-  return `
-    a.article_id IN (
-      SELECT ka.article_id
-      FROM "Keyword_Article" ka
-      WHERE ka.keyword_id = ANY($${paramIndex}::bigint[])
-    )
-  `;
-}
-
 export async function getProjectScope(client, projectId) {
   const projectRes = await client.query(
     `

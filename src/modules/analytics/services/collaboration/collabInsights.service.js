@@ -59,7 +59,7 @@ export async function getCollaborationInsights(projectId, filters = {}) {
         criticalKw = keywordData[1]?.keyword || '';
       }
     }
-  } catch (err) {
+  } catch {
     // Silent fallback
   }
 

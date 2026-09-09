@@ -153,7 +153,7 @@ export async function getDistribution(options) {
 
       try {
         await redisSet(cacheKey, JSON.stringify(finalResult), CACHE_TTL);
-      } catch (err) {}
+      } catch {}
 
       return finalResult;
     }

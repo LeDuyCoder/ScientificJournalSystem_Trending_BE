@@ -134,7 +134,6 @@ async function getCountriesByArticles(articles, client) {
   if (articles.length === 0) return new Map();
 
   const articleIds = articles.map(a => a.article_id);
-  const articleYearMap = new Map(articles.map(a => [a.article_id, a.publication_year]));
 
   // Join `Institution_Author.institution_id`
   // và `ia.year = (subquery)` để đảm bảo tính chính xác về thời gian.

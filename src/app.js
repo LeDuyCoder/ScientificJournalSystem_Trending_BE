@@ -23,7 +23,7 @@ app.register(cors, {
   credentials: true,
 });
 // Hook to sanitize incoming query parameters that are literally "undefined"
-app.addHook('preValidation', async (request, reply) => {
+app.addHook('preValidation', async (request) => {
   if (request.query) {
     for (const key in request.query) {
       if (request.query[key] === 'undefined' || request.query[key] === 'null') {
@@ -33,7 +33,7 @@ app.addHook('preValidation', async (request, reply) => {
   }
 });
 // Trả về JSON swaggerSpec cũ
-app.get('/api-docs.json', async (request, reply) => {
+app.get('/api-docs.json', async () => {
   return swaggerSpec;
 });
 
@@ -54,7 +54,7 @@ app.register(swaggerUi, {
 });
 
 // Health check
-app.get('/', async (request, reply) => {
+app.get('/', async () => {
   return { message: 'Scientific Journal API is running (Fastify)' };
 });
 
