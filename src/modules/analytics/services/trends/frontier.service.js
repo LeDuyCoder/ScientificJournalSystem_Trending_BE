@@ -2,7 +2,7 @@ import { neo4jDriver } from '../../../../config/neo4j.js';
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 
 const CACHE_KEY = 'analytics:frontier:topics:v6';
-const CACHE_TTL = 43200; // 12 hours // 5 minutes
+const CACHE_TTL = 300; // 5 minutes
 
 /**
  * Chuẩn bị và phân loại các bộ lọc thành ID và Tên chữ thường (case-insensitive)

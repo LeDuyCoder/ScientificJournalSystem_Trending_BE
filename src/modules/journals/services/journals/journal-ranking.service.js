@@ -5,7 +5,7 @@ import { getResolvedScope } from '../../../analytics/services/analytics/scope.re
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 
 const CACHE_KEY_PREFIX = 'analytics:journal-ranking:v2';
-const CACHE_TTL = 43200; // 12 hours // 1 hour
+const CACHE_TTL = 300; // 5 minutes
 
 export async function getJournalRanking(filters) {
   const projectId = filters.project_id || filters.projectId;
@@ -262,7 +262,9 @@ export async function getJournalRanking(filters) {
       };
 
       // Save full project ranked list to Redis cache for instant sub-page navigation
-      await redisSet(quickCacheKey, JSON.stringify({ allJournals, totalCount, summary }), CACHE_TTL).catch(e => console.warn(e));
+      // Only cache for full TTL if we actually found journals; avoid poisoning cache with empty results
+      const effectiveTtl = (allJournals && allJournals.length > 0) ? CACHE_TTL : 10;
+      await redisSet(quickCacheKey, JSON.stringify({ allJournals, totalCount, summary }), effectiveTtl).catch(e => console.warn(e));
 
       return {
         journals: allJournals.slice(offset, offset + limitNum),

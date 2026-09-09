@@ -4,7 +4,7 @@ import { redisClient } from '../../../../config/redis.js';
 
 import logger from '../../../../utils/logger.js';
 
-const CACHE_TTL = 43200; // 12 hours
+const CACHE_TTL = 300; // 5 minutes
 
 // Helper: Xóa cache liên quan đến project
 async function invalidateProjectCache(projectId) {

@@ -25,4 +25,21 @@ export async function redisSet(key, value, ttlSeconds) {
   return redisClient.set(key, value);
 }
 
+export async function redisDel(key) {
+  try {
+    return await redisClient.del(key);
+  } catch (err) {
+    return null;
+  }
+}
 
+export async function redisDeletePattern(pattern) {
+  try {
+    const keys = await redisClient.keys(pattern);
+    if (keys && keys.length > 0) {
+      await redisClient.del(keys);
+    }
+  } catch (err) {
+    // Ignore cache deletion error
+  }
+}

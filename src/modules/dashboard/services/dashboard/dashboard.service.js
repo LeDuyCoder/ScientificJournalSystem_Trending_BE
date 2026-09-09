@@ -4,7 +4,7 @@ import pool from '../../../../config/database.js';
 import { getProjectScope } from '../../../analytics/services/trends/forecast.service.js';
 
 const CACHE_KEY = 'dashboard:stats';
-const CACHE_TTL = 43200; // 12 hours // 5 phút
+const CACHE_TTL = 300; // 5 minutes
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CÁC HÀM TRỢ GIÚP (HELPERS)

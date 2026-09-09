@@ -158,7 +158,7 @@ export async function searchArticlesByKeyword(keyword, options = {}) {
     };
 
     try {
-      await redisSet(cacheKey, JSON.stringify(payload), 43200);
+      await redisSet(cacheKey, JSON.stringify(payload), 300);
       logger.info(`[Redis] Search graph results cached for key: ${cacheKey}`);
     } catch (cacheErr) {
       logger.warn('Failed to save search graph to Redis:', cacheErr?.message || cacheErr);

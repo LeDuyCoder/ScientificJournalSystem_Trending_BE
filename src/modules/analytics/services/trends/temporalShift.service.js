@@ -3,7 +3,7 @@ import logger from '../../../../utils/logger.js';
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 import { getProjectScope } from '../trends/forecast.service.js';
 
-const CACHE_TTL = 43200; // 12 hours
+const CACHE_TTL = 300; // 5 minutes
 
 /**
  * Service to calculate temporal shift heatmap grid data and drift entropy.
