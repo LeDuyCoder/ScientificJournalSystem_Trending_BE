@@ -262,7 +262,9 @@ export async function getJournalRanking(filters) {
       };
 
       // Save full project ranked list to Redis cache for instant sub-page navigation
-      await redisSet(quickCacheKey, JSON.stringify({ allJournals, totalCount, summary }), CACHE_TTL).catch(e => console.warn(e));
+      // Only cache for full TTL if we actually found journals; avoid poisoning cache with empty results
+      const effectiveTtl = (allJournals && allJournals.length > 0) ? CACHE_TTL : 10;
+      await redisSet(quickCacheKey, JSON.stringify({ allJournals, totalCount, summary }), effectiveTtl).catch(e => console.warn(e));
 
       return {
         journals: allJournals.slice(offset, offset + limitNum),

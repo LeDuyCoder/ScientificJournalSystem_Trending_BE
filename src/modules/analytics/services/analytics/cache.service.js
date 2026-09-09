@@ -52,12 +52,20 @@ export async function fetchWithCache(cacheKey, ttl, fetchPromiseFn) {
   const freshData = await fetchPromiseFn();
   
   try {
+    const isEmpty = !freshData ||
+      (Array.isArray(freshData) && freshData.length === 0) ||
+      (Array.isArray(freshData?.items) && freshData.items.length === 0) ||
+      (Array.isArray(freshData?.journals) && freshData.journals.length === 0) ||
+      (Array.isArray(freshData?.authors) && Array.isArray(freshData?.institutions) && freshData.authors.length === 0 && freshData.institutions.length === 0);
+
+    const effectiveTtl = isEmpty ? 10 : ttl;
+
     const payload = {
       data: freshData,
       cachedAt: Date.now(),
-      ttl: ttl
+      ttl: effectiveTtl
     };
-    await redisSet(cacheKey, JSON.stringify(payload), ttl);
+    await redisSet(cacheKey, JSON.stringify(payload), effectiveTtl);
   } catch (err) {
     logger.warn(`[Redis] Cache error on set for ${cacheKey}:`, err?.message || err);
   }

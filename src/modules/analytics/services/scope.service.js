@@ -1,6 +1,6 @@
 import pool from '../../../config/database.js';
 import logger from '../../../utils/logger.js';
-import { redisGet, redisSet } from '../../core/services/infrastructure/redis.service.js';
+import { redisGet, redisSet, redisDeletePattern } from '../../core/services/infrastructure/redis.service.js';
 
 const SCOPE_ENSURED_TTL = 300; // 5 minutes
 
@@ -111,9 +111,16 @@ export async function ensureProjectScope(projectId, dbClient = null) {
       'SELECT COUNT(*) FROM "Project_Article_Scope" WHERE project_id = $1',
       [numId]
     );
-    logger.info(`[Scope Service] Ensured Project_Article_Scope for project ${numId}: ${countRes.rows[0].count} articles`);
+    const newCount = Number(countRes.rows[0]?.count || 0);
+    logger.info(`[Scope Service] Ensured Project_Article_Scope for project ${numId}: ${newCount} articles`);
 
     try {
+      if (newCount > 0) {
+        // Clear stale analytics caches for this project since scope is now populated
+        await redisDeletePattern(`*:${numId}:*`);
+        await redisDeletePattern(`*:${numId}`);
+        await redisDeletePattern(`analytics:*:${numId}*`);
+      }
       await redisSet(cacheKey, 'true', SCOPE_ENSURED_TTL);
     } catch (e) {}
   } catch (error) {
