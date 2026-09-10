@@ -26,6 +26,7 @@ import { getCrossLinks } from './services/collaboration/crossLinks.service.js';
 import { getTemporalShift } from './services/trends/temporalShift.service.js';
 import { getCollaborationInsights, getCollaborationMetrics } from './services/collaboration/collabInsights.service.js';
 import { getCuratedArticles, getProjectKeywords, getTrackedJournals, addProjectKeyword, removeProjectKeyword } from '../journals/services/journals/curatedArticles.service.js';
+import { getTopEntities, getProjectSubjectCategories } from '../dashboard/services/dashboard/analytics.service.js';
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -130,14 +131,14 @@ export async function fetchJournalRanking(request, reply) {
  */
 export async function getTopEntitiesHandler(request, reply) {
   try {
-    const query = request.query;
+    const { project_id, entity_type, from_year, to_year, limit } = request.query;
 
     const filters = {
-      projectId: query.project_id,
-      entityType: query.entity_type,
-      fromYear: query.from_year,
-      toYear: query.to_year,
-      limit: query.limit
+      projectId: project_id,
+      entityType: entity_type,
+      fromYear: from_year,
+      toYear: to_year,
+      limit
     };
     const data = await getTopEntities(filters);
 
@@ -359,7 +360,6 @@ export async function fetchImpactQuartiles(request, reply) {
   }
 }
 
-/**
 /**
  * Fetch Topic Intensity Matrix
  *
@@ -790,7 +790,6 @@ export async function fetchProjectSubjectCategories(request, reply) {
       search: request.query.search,
     };
 
-    const { getProjectSubjectCategories } = await import('../dashboard/services/dashboard/analytics.service.js');
     const data = await getProjectSubjectCategories(filters);
 
     reply.send({
