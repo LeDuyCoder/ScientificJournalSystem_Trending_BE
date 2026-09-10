@@ -53,7 +53,7 @@ async function bootstrap() {
         closeRedis(),
         closeNeo4j ? closeNeo4j() : Promise.resolve(),
       ]);
-    } catch (e) {
+    } catch {
       // ignore
     }
     process.exit(0);

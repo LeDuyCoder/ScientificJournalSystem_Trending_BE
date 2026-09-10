@@ -486,7 +486,7 @@ export async function getDevelopmentTrends(query = {}) {
         } else {
           throw new Error('No project found in database to calculate forecast');
         }
-      } catch (err) {
+      } catch {
         // Fallback static insights
         const capitalizedDomain = mappedDomain ? mappedDomain.charAt(0).toUpperCase() + mappedDomain.slice(1) : 'Biochemistry';
         forecastInsightsData = [

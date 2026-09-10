@@ -3,7 +3,7 @@
 import { searchArticles } from './articles.controller.js';
 import { validateSearchArticles } from './articles.validator.js';
 
-export default async function (fastify, opts) {
+export default async function (fastify) {
 
 /**
  * Search articles in Neo4j by keyword and return nodes + relationships (r:REFERENCES).

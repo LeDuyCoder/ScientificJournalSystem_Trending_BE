@@ -105,11 +105,6 @@ export async function getFrontierTopics(filters = {}) {
     );
   }
 
-  const currentYear = new Date().getFullYear();
-  const prevYear1 = currentYear - 1;
-  const prevYear2 = currentYear - 2;
-  const cutoffYear = prevYear2;
-
   const session = driver.session({ defaultAccessMode: 'READ' });
 
   try {
