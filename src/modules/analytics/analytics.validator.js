@@ -36,9 +36,11 @@ export function validateQuery(schema) {
 // Schema chung cho các bộ lọc có thể tái sử dụng
 const commonFiltersSchema = {
   subject_area: z.string().optional(),
+  subject_category: z.string().optional(),
   keywords: z.string().optional(), // Sẽ được service xử lý split(',')
   from_year: z.coerce.number().int().optional(),
   to_year: z.coerce.number().int().optional(),
+  zone: z.string().trim().optional(),
   is_open_access: z.preprocess((val) => {
     if (typeof val === 'string') return val === 'true';
     return Boolean(val);
@@ -177,13 +179,20 @@ export const getDevelopmentTrendsSchema = z.object({
   project_id: z.string().optional(),
   timeframe: z.string().optional().default('Last 5 Years'),
   domain: z.string().optional(),
+  subject_area: z.string().optional(),
   subject_category: z.string().optional(),
-  region: z.string().optional()
+  region: z.string().optional(),
+  zone: z.string().optional()
+});
+
+// Schema cho /analytics/subject-areas
+export const getSubjectAreasSchema = z.object({
+  project_id: z.string().optional(),
 });
 
 // Schema cho /analytics/subject-categories
 export const getSubjectCategoriesSchema = z.object({
-  project_id: z.string({ required_error: 'project_id is required' }).min(1, 'project_id is required'),
+  project_id: z.string().optional(),
   page: z.coerce.number().int().positive().optional().default(1),
   limit: z.coerce.number().int().positive().max(1000).optional().default(1000),
   search: z.string().optional(),

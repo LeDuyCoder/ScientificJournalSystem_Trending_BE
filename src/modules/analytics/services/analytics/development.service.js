@@ -27,11 +27,12 @@ function parseTimeframe(timeframe) {
 }
 
 export async function getDevelopmentTrends(query = {}) {
-  const cacheKey = `${CACHE_KEY_PREFIX}:${query.project_id || 'all'}:${query.timeframe || 'default'}:${query.domain || 'all'}:${query.subject_category || 'all'}:${query.region || 'global'}`;
+  const zone = (query.zone || query.region || '').trim();
+  const cacheKey = `${CACHE_KEY_PREFIX}:${query.project_id || 'all'}:${query.timeframe || 'default'}:${query.domain || 'all'}:${query.subject_category || 'all'}:${zone || 'global'}`;
 
   return fetchWithCache(cacheKey, CACHE_TTL, async () => {
     const startTotal = Date.now();
-    logger.info(`[Analytics] Starting development trends orchestrator for project ${query.project_id || 'all'}`);
+    logger.info(`[Analytics] Starting development trends orchestrator for project ${query.project_id || 'all'} (zone: ${zone || 'all'})`);
 
     // 1. Resolve highly-cached scope
     const scopeStart = Date.now();
@@ -41,33 +42,34 @@ export async function getDevelopmentTrends(query = {}) {
     const timeframeQuery = parseTimeframe(query.timeframe);
 
     const moduleTimeouts = [
-        { name: 'publication', fn: () => getPublicationTrendsData(scope, timeframeQuery), timeout: 30000 },
-        { name: 'citations', fn: () => getCitationMirroringData(scope, timeframeQuery), timeout: 30000 },
-        { name: 'topics', fn: () => getTopicEvolutionData(scope, timeframeQuery), timeout: 30000 },
-        { name: 'frontier', fn: () => getFrontierDetectionData(scope), timeout: 30000 },
-        { name: 'forecast', fn: () => getForecastData(scope), timeout: 15000 }  // Timeout after 15s
+      { name: 'publication', fn: () => getPublicationTrendsData(scope, timeframeQuery, zone), timeout: 30000 },
+      { name: 'citations', fn: () => getCitationMirroringData(scope, timeframeQuery, zone), timeout: 30000 },
+      { name: 'topics', fn: () => getTopicEvolutionData(scope, timeframeQuery), timeout: 30000 },
+      { name: 'frontier', fn: () => getFrontierDetectionData(scope), timeout: 30000 },
+      { name: 'forecast', fn: () => getForecastData(scope), timeout: 15000 }
     ];
 
-    const results = {};
-    for (const module of moduleTimeouts) {
-        try {
-            results[module.name] = await Promise.race([
-                module.fn(),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error(`${module.name} module timeout`)), module.timeout)
-                )
-            ]);
-        } catch (err) {
-            logger.warn(`[Analytics] ${module.name} module failed:`, err?.message);
-            results[module.name] = module.name === 'forecast' ? [] : null;
-        }
-    }
+    const executeModule = async (module) => {
+      try {
+        return await Promise.race([
+          module.fn(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${module.name} module timeout`)), module.timeout)
+          )
+        ]);
+      } catch (err) {
+        logger.warn(`[Analytics] ${module.name} module failed:`, err?.message);
+        return module.name === 'forecast' ? [] : null;
+      }
+    };
 
-    const publicationTrend = results.publication;
-    const citationMirroring = results.citations;
-    const topicEvolution = results.topics;
-    const frontierDetection = results.frontier;
-    const forecastInsights = results.forecast;
+    const [
+      publicationTrend,
+      citationMirroring,
+      topicEvolution,
+      frontierDetection,
+      forecastInsights
+    ] = await Promise.all(moduleTimeouts.map(executeModule));
 
     const responseData = {
       publicationTrend,
