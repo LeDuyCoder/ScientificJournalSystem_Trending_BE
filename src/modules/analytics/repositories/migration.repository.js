@@ -18,9 +18,7 @@ export async function findJournalMigrationSnapshots(filter) {
     projectCategoryIds,
     projectKeywordIds,
     subjectArea,
-    keywordList,
-    fromYear,
-    toYear
+    keywordList
   } = filter;
 
   let params = [];

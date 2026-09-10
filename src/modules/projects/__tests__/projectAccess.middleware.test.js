@@ -19,7 +19,6 @@ vi.mock('../../../utils/logger.js', () => ({
 describe('Project Access Middleware', () => {
   let mockReq;
   let mockRes;
-  let mockNext;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -37,8 +36,6 @@ describe('Project Access Middleware', () => {
       status: vi.fn().mockReturnThis(),
       send: vi.fn(),
     };
-    
-    mockNext = vi.fn();
   });
 
   it('should skip auth check if no project ID is provided', async () => {

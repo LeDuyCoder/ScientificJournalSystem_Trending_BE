@@ -1,25 +1,6 @@
 import { z } from 'zod';
 
 /**
- * Hàm hỗ trợ phân tích query parameter thành mảng các chuỗi/số sạch.
- * @param {any} val - Giá trị query parameter.
- * @returns {Array<string|number>}
- */
-function parseFilterArray(val) {
-  if (!val) return [];
-  const raw = Array.isArray(val)
-    ? val
-    : String(val).split(',').map(v => v.trim());
-
-  return raw
-    .map(v => {
-      const num = Number(v);
-      return !Number.isNaN(num) && String(num) === String(v) ? num : v;
-    })
-    .filter(v => v !== '');
-}
-
-/**
  * Middleware factory để xác thực request query dựa trên một schema của Zod.
  * @param {z.ZodSchema} schema - Zod schema để xác thực.
  * @returns {import('express').RequestHandler}

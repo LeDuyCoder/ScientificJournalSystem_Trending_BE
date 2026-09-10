@@ -3,7 +3,7 @@
 import { searchEntitiesHandler } from './search.controller.js';
 import { validateSearchEntities } from './search.validator.js';
 
-export default async function (fastify, opts) {
+export default async function (fastify) {
 
 /**
  * Search articles, journals, authors and related research entities.

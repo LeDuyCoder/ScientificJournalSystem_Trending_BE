@@ -1,6 +1,5 @@
 import pool from '../../../../config/database.js';
 import logger from '../../../../utils/logger.js';
-import { fetchWithCache } from '../../../analytics/services/analytics/cache.service.js';
 import { getResolvedScope } from '../../../analytics/services/analytics/scope.repository.js';
 import { redisGet, redisSet } from '../../../core/services/infrastructure/redis.service.js';
 

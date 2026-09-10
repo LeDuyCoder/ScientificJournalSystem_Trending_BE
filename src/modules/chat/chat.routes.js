@@ -12,7 +12,7 @@ import { requireAuth } from '../auth/auth.middleware.js';
 import { chatRateLimiter } from '../core/rateLimiter.middleware.js';
 import { parseCookies } from '../../utils/authToken.utils.js';
 
-export default async function (fastify, opts) {
+export default async function (fastify) {
 
 /**
  * @openapi
