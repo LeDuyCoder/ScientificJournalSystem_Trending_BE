@@ -200,12 +200,16 @@ export default async function (fastify) {
  */
 
 fastify.get('/debug-auth', (req, res) => {
-  res.json({
+  const payload = {
     success: true,
     headers: req.headers,
     cookies: req.headers.cookie || 'No cookies header',
     parsedCookies: req.headers.cookie ? parseCookies(req.headers.cookie) : {},
-  });
+  };
+  if (typeof res.send === 'function') {
+    return res.send(payload);
+  }
+  return res.json(payload);
 });
 
 fastify.post('/chat', { preHandler: [requireAuth, chatRateLimiter] }, chatRagSystem);

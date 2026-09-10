@@ -38,10 +38,14 @@ export const chatRateLimiter = async (req, res) => {
             }
             if (currentCount > limit) {
                 logger.warn(`[Rate Limit] (Redis) Bị chặn yêu cầu chat từ IP: ${ip} cho Project ID: ${projectId}. (Count: ${currentCount})`);
-                return res.status(429).json({
+                const payload = {
                     success: false,
                     message: 'Bạn đã vượt quá giới hạn 5 yêu cầu chat mỗi phút cho dự án này. Vui lòng thử lại sau.'
-                });
+                };
+                if (res && typeof res.status === 'function') {
+                    return typeof res.send === 'function' ? res.status(429).send(payload) : res.status(429).json(payload);
+                }
+                return res.code(429).send(payload);
             }
             return;
         } catch (error) {
@@ -64,10 +68,14 @@ export const chatRateLimiter = async (req, res) => {
             record.count += 1;
             if (record.count > limit) {
                 logger.warn(`[Rate Limit] (In-Memory) Bị chặn yêu cầu chat từ IP: ${ip} cho Project ID: ${projectId}. (Count: ${record.count})`);
-                return res.status(429).json({
+                const payload = {
                     success: false,
                     message: 'Bạn đã vượt quá giới hạn 5 yêu cầu chat mỗi phút cho dự án này. Vui lòng thử lại sau.'
-                });
+                };
+                if (res && typeof res.status === 'function') {
+                    return typeof res.send === 'function' ? res.status(429).send(payload) : res.status(429).json(payload);
+                }
+                return res.code(429).send(payload);
             }
         }
         return;

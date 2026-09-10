@@ -6,6 +6,13 @@ import * as distributionService from '../../src/modules/analytics/services/trend
 import * as forecastService from '../../src/modules/analytics/services/trends/forecast.service.js';
 
 // Mock the services
+vi.mock('../../src/modules/auth/auth.middleware.js', () => ({
+  requireAuth: vi.fn(async (req, res, ...rest) => {
+    req.user = { user_id: '123', role: 'STUDENT' };
+    if (typeof rest[0] === 'function') rest[0]();
+  }),
+}));
+
 vi.mock('../../src/modules/analytics/services/trends/trends.service.js', () => ({
   getPublicationTrends: vi.fn(),
 }));

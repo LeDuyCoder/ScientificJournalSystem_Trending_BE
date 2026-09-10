@@ -20,7 +20,7 @@ export async function getDashboardStatsHandler(request, reply) {
         const data = await getDashboardStats(filters);
 
         // Trả về phản hồi thành công kèm dữ liệu thống kê
-        reply.status(200).send({
+        return reply.status(200).send({
             code: 200,
             message: 'Fetch dashboard statistics successfully',
             data,
