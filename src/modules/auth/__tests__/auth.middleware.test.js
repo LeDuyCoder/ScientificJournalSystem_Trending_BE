@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { requireAuth } from '../auth.middleware.js';
 import * as authTokenUtils from '../../../utils/authToken.utils.js';
 import logger from '../../../utils/logger.js';
+import prisma from '../../../config/prisma.js';
 
 vi.mock('../../../utils/authToken.utils.js', () => ({
   AuthRequiredError: class AuthRequiredError extends Error {},
@@ -14,6 +15,14 @@ vi.mock('../../../utils/logger.js', () => ({
     error: vi.fn(),
     warn: vi.fn(),
     info: vi.fn(),
+  },
+}));
+
+vi.mock('../../../config/prisma.js', () => ({
+  default: {
+    user: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -38,15 +47,16 @@ describe('Auth Middleware', () => {
     mockNext = vi.fn();
   });
 
-  it('should call next and set req.user on successful authentication', () => {
+  it('should call next and set req.user on successful authentication', async () => {
     const mockToken = 'valid-token';
     const mockUserId = 'user123';
     const mockPayload = { role: 'admin' };
 
     authTokenUtils.extractAccessTokenFromRequest.mockReturnValue(mockToken);
     authTokenUtils.getAuthenticatedUserId.mockReturnValue({ userId: mockUserId, payload: mockPayload });
+    prisma.user.findUnique.mockResolvedValue(null);
 
-    requireAuth(mockReq, mockRes, mockNext);
+    await requireAuth(mockReq, mockRes, mockNext);
 
     expect(authTokenUtils.extractAccessTokenFromRequest).toHaveBeenCalledWith(mockReq);
     expect(authTokenUtils.getAuthenticatedUserId).toHaveBeenCalledWith(mockReq);
@@ -58,13 +68,13 @@ describe('Auth Middleware', () => {
     expect(mockNext).toHaveBeenCalled();
   });
 
-  it('should return 401 if AuthRequiredError is thrown', () => {
+  it('should return 401 if AuthRequiredError is thrown', async () => {
     const error = new authTokenUtils.AuthRequiredError('Auth required');
     authTokenUtils.extractAccessTokenFromRequest.mockImplementation(() => {
       throw error;
     });
 
-    requireAuth(mockReq, mockRes, mockNext);
+    await requireAuth(mockReq, mockRes, mockNext);
 
     expect(mockRes.status).toHaveBeenCalledWith(401);
     expect(mockRes.json).toHaveBeenCalledWith({
@@ -74,13 +84,32 @@ describe('Auth Middleware', () => {
     expect(mockNext).not.toHaveBeenCalled();
   });
 
-  it('should return 500 for other unexpected errors', () => {
+  it('should return 403 if user account is BANNED', async () => {
+    const mockToken = 'valid-token';
+    const mockUserId = 'banned-user';
+    const mockPayload = { role: 'student' };
+
+    authTokenUtils.extractAccessTokenFromRequest.mockReturnValue(mockToken);
+    authTokenUtils.getAuthenticatedUserId.mockReturnValue({ userId: mockUserId, payload: mockPayload });
+    prisma.user.findUnique.mockResolvedValue({ user_id: mockUserId, status: 'BANNED' });
+
+    await requireAuth(mockReq, mockRes, mockNext);
+
+    expect(mockRes.status).toHaveBeenCalledWith(403);
+    expect(mockRes.json).toHaveBeenCalledWith({
+      success: false,
+      message: 'Tài khoản của bạn đã bị khóa.',
+    });
+    expect(mockNext).not.toHaveBeenCalled();
+  });
+
+  it('should return 500 for other unexpected errors', async () => {
     const error = new Error('Unexpected failure');
     authTokenUtils.extractAccessTokenFromRequest.mockImplementation(() => {
       throw error;
     });
 
-    requireAuth(mockReq, mockRes, mockNext);
+    await requireAuth(mockReq, mockRes, mockNext);
 
     expect(logger.error).toHaveBeenCalled();
     expect(mockRes.status).toHaveBeenCalledWith(500);
@@ -90,4 +119,24 @@ describe('Auth Middleware', () => {
     });
     expect(mockNext).not.toHaveBeenCalled();
   });
+
+  it('should support Fastify reply with status().send() without next callback', async () => {
+    const mockFastifyReply = {
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn(),
+    };
+    const error = new authTokenUtils.AuthRequiredError('Auth required');
+    authTokenUtils.extractAccessTokenFromRequest.mockImplementation(() => {
+      throw error;
+    });
+
+    await requireAuth(mockReq, mockFastifyReply);
+
+    expect(mockFastifyReply.status).toHaveBeenCalledWith(401);
+    expect(mockFastifyReply.send).toHaveBeenCalledWith({
+      success: false,
+      message: 'Vui lòng đăng nhập để tiếp tục.',
+    });
+  });
 });
+

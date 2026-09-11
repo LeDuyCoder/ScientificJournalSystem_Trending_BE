@@ -4,7 +4,6 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { swaggerSpec } from './swagger/swagger.js';
 import indexRoutes from './modules/index.js';
-import { ensureProjectScope } from './modules/analytics/services/scope.service.js';
 
 
 const app = Fastify({
@@ -34,13 +33,6 @@ app.addHook('preValidation', async (request) => {
   }
 });
 
-// Hook to automatically ensure Project_Article_Scope is populated for projects
-app.addHook('preHandler', async (request, reply) => {
-  const projectId = request.query?.project_id || request.params?.project_id || request.params?.id;
-  if (projectId) {
-    await ensureProjectScope(projectId);
-  }
-});
 // Trả về JSON swaggerSpec cũ
 app.get('/api-docs.json', async () => {
   return swaggerSpec;

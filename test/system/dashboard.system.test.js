@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import app from '../../src/app.js';
 import * as dashboardService from '../../src/modules/dashboard/services/dashboard/dashboard.service.js';
+vi.mock('../../src/modules/auth/auth.middleware.js', () => ({
+  requireAuth: vi.fn(async (req, res, ...rest) => {
+    req.user = { user_id: '123', role: 'STUDENT' };
+    if (typeof rest[0] === 'function') rest[0]();
+  }),
+}));
 
 vi.mock('../../src/modules/dashboard/services/dashboard/dashboard.service.js', () => ({
   getDashboardStats: vi.fn(),
