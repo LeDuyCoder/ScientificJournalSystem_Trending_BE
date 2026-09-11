@@ -67,8 +67,9 @@ function calculateGeoIntensity(countryMetrics) {
  * @returns {Promise<Array<object>>}
  */
 export async function getGeoDistribution(projectId, filters = {}) {
-  const { country, subjectArea, keywords, fromYear, toYear } = filters;
+  const { country, zone, subjectArea, subjectCategory, keywords, fromYear, toYear } = filters;
   const normalizedCountry = country ? String(country).trim() : '';
+  const normalizedZone = zone && zone !== 'Global Distribution' && zone !== 'all' ? String(zone).trim() : '';
 
   // Process keywords into a clean sorted string to form a stable cache key
   let normalizedKeywords = '';
@@ -80,10 +81,10 @@ export async function getGeoDistribution(projectId, filters = {}) {
     normalizedKeywords = [...keywordList].map(s => s.toLowerCase()).sort().join(',');
   }
 
-  // Build stable cache key. Keep the old key shape when country is not provided.
+  // Build stable cache key
   const cacheKey = normalizedCountry
-    ? `${CACHE_KEY_PREFIX}:${projectId}:country:${normalizedCountry.toLowerCase()}:${(subjectArea || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`
-    : `${CACHE_KEY_PREFIX}:${projectId}:${(subjectArea || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`;
+    ? `${CACHE_KEY_PREFIX}:${projectId}:country:${normalizedCountry.toLowerCase()}:zone:${normalizedZone.toLowerCase()}:${(subjectArea || '').toLowerCase()}:${(subjectCategory || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`
+    : `${CACHE_KEY_PREFIX}:${projectId}:zone:${normalizedZone.toLowerCase()}:${(subjectArea || '').toLowerCase()}:${(subjectCategory || '').toLowerCase()}:${normalizedKeywords}:${fromYear || ''}:${toYear || ''}`;
 
   try {
     const cachedData = await redisGet(cacheKey);
@@ -103,8 +104,9 @@ export async function getGeoDistribution(projectId, filters = {}) {
     const hasSubjectArea = !!subjectArea;
     const hasKeywords = keywordList.length > 0;
     const hasCountry = !!normalizedCountry;
+    const hasZone = !!normalizedZone;
 
-    if (!hasProjectFilter && !hasSubjectArea && !hasKeywords) {
+    if (!hasProjectFilter && !hasSubjectArea && !hasKeywords && !hasZone) {
       let fastParams = [];
       let fastWhere = [];
 
@@ -167,30 +169,52 @@ export async function getGeoDistribution(projectId, filters = {}) {
       }
     }
 
-    // Client custom filter: subject_area
-    if (subjectArea) {
-      // Find subject_area_id by display_name
-      const saRes = await client.query(
-        `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
-        [subjectArea.trim()]
-      );
+    // Client custom filter: subjectCategory or subjectArea
+    const isCatActive = subjectCategory &&
+      String(subjectCategory).trim().toLowerCase() !== 'all' &&
+      String(subjectCategory).trim().toLowerCase() !== 'all categories';
+    const isAreaActive = subjectArea &&
+      String(subjectArea).trim().toLowerCase() !== 'all' &&
+      String(subjectArea).trim().toLowerCase() !== 'all areas';
 
-      if (saRes.rows.length === 0) {
-        logger.info(`Subject area filter '${subjectArea}' not found. Returning empty array.`);
-        return [];
+    if (isCatActive || isAreaActive) {
+      let filterCategoryIds = [];
+      if (isCatActive) {
+        const scRes = await client.query(
+          `SELECT subject_category_id FROM "Subject_Category" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+             AND COALESCE(is_deleted, false) = false`,
+          [subjectCategory.trim()]
+        );
+        filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+      } else if (isAreaActive) {
+        const saRes = await client.query(
+          `SELECT subject_area_id FROM "Subject_Area" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_area_id::text = $1)
+             AND COALESCE(is_deleted, false) = false`,
+          [subjectArea.trim()]
+        );
+
+        if (saRes.rows.length > 0) {
+          const saId = saRes.rows[0].subject_area_id;
+          const scRes = await client.query(
+            `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
+            [saId]
+          );
+          filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+        } else {
+          const scRes = await client.query(
+            `SELECT subject_category_id FROM "Subject_Category" 
+             WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+               AND COALESCE(is_deleted, false) = false`,
+            [subjectArea.trim()]
+          );
+          filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+        }
       }
 
-      const saId = saRes.rows[0].subject_area_id;
-
-      // Get categories under this subject_area
-      const scRes = await client.query(
-        `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
-        [saId]
-      );
-      const filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
-
       if (filterCategoryIds.length === 0) {
-        logger.info(`Subject area filter '${subjectArea}' has no categories. Returning empty array.`);
+        logger.info(`Subject filter not found in area or category. Returning empty array.`);
         return [];
       }
 
@@ -247,6 +271,23 @@ export async function getGeoDistribution(projectId, filters = {}) {
       sqlFilters.push(`a.publication_year <= $${params.length}`);
     }
 
+    // Client custom filter: zone (Region or Country)
+    let resolvedZoneId = null;
+    if (normalizedZone) {
+      const zRes = await client.query(
+        `SELECT zone_id FROM "Zone" 
+         WHERE LOWER(name) = LOWER($1) OR UPPER(code) = UPPER($1) OR zone_id::text = $1 
+         LIMIT 1`,
+        [normalizedZone]
+      );
+      if (zRes.rows.length > 0) {
+        resolvedZoneId = zRes.rows[0].zone_id;
+      } else {
+        logger.info(`Zone '${normalizedZone}' not found in Zone table. Returning empty array.`);
+        return [];
+      }
+    }
+
     const whereClause = sqlFilters.length > 0 ? `AND ${sqlFilters.join(' AND ')}` : '';
 
     let querySql;
@@ -254,6 +295,12 @@ export async function getGeoDistribution(projectId, filters = {}) {
     if (normalizedCountry) {
       params.push(normalizedCountry);
       const countryIndex = params.length;
+
+      let zoneCondition = '';
+      if (resolvedZoneId) {
+        params.push(resolvedZoneId);
+        zoneCondition = `AND (j.region = $${params.length} OR j.country = $${params.length})`;
+      }
 
       querySql = `
         WITH FilteredArticles AS (
@@ -281,10 +328,17 @@ export async function getGeoDistribution(projectId, filters = {}) {
             OR UPPER(country_zone.code) = UPPER($${countryIndex})
             OR UPPER(country_zone.iso_code) = UPPER($${countryIndex})
           )
+          ${zoneCondition}
         GROUP BY country_zone.code, country_zone.name, region_zone.code, region_zone.name
         ORDER BY count DESC
       `;
     } else {
+      let zoneCondition = '';
+      if (resolvedZoneId) {
+        params.push(resolvedZoneId);
+        zoneCondition = `WHERE (j.region = $${params.length} OR j.country = $${params.length})`;
+      }
+
       querySql = `
         WITH FilteredArticles AS (
             SELECT a.article_id, a.issue_id
@@ -301,6 +355,7 @@ export async function getGeoDistribution(projectId, filters = {}) {
         JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
         JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
         JOIN "Zone" z ON j.country = z.zone_id AND z.type = 'COUNTRY'
+        ${zoneCondition}
         GROUP BY z.code
         ORDER BY count DESC
       `;

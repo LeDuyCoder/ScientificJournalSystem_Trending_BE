@@ -26,7 +26,7 @@ import { getCrossLinks } from './services/collaboration/crossLinks.service.js';
 import { getTemporalShift } from './services/trends/temporalShift.service.js';
 import { getCollaborationInsights, getCollaborationMetrics } from './services/collaboration/collabInsights.service.js';
 import { getCuratedArticles, getProjectKeywords, getTrackedJournals, addProjectKeyword, removeProjectKeyword } from '../journals/services/journals/curatedArticles.service.js';
-import { getTopEntities, getProjectSubjectCategories } from '../dashboard/services/dashboard/analytics.service.js';
+import { getTopEntities, getProjectSubjectCategories, getZones, getSubjectAreasHierarchy } from '../dashboard/services/dashboard/analytics.service.js';
 
 /**
  * Return publication and citation trend data for chart rendering.
@@ -66,11 +66,14 @@ export async function fetchTrends(request, reply) {
  */
 export async function fetchJournalQuartileDistribution(request, reply) {
   try {
-    const { project_id, subject_area, keywords, from_year, to_year } = request.query;
+    const { project_id, subject_area, subject_category, keywords, from_year, to_year } = request.query;
 
     const data = await getJournalQuartileDistribution({
+      project_id: project_id ? String(project_id) : undefined,
       projectId: project_id ? String(project_id) : undefined,
+      subject_area: subject_area ? String(subject_area) : undefined,
       subjectArea: subject_area ? String(subject_area) : undefined,
+      subject_category: subject_category ? String(subject_category) : undefined,
       keywords: keywords ? String(keywords) : undefined,
       from_year: from_year,
       to_year: to_year,
@@ -212,15 +215,17 @@ export async function fetchFrontier(request, reply) {
  */
 export async function fetchDistribution(request, reply) {
   try {
-    const { project_id, distribution_type, subject_area, keywords, from_year, to_year } = request.query;
+    const { project_id, distribution_type, subject_area, subject_category, keywords, from_year, to_year, zone } = request.query;
 
     const options = {
       project_id,
       distribution_type,
       subject_area,
+      subject_category,
       keywords,
       from_year,
       to_year,
+      zone,
     };
 
     const data = await getDistribution(options);
@@ -289,11 +294,13 @@ export async function fetchForecast(request, reply) {
  */
 export async function fetchGeoDistribution(request, reply) {
   try {
-    const { project_id: projectId, country, subject_area, keywords, from_year, to_year } = request.query;
+    const { project_id: projectId, country, zone, subject_area, subject_category, keywords, from_year, to_year } = request.query;
 
     const filters = {
       country,
+      zone,
       subjectArea: subject_area,
+      subjectCategory: subject_category,
       keywords: keywords,
       fromYear: from_year,
       toYear: to_year,
@@ -1060,3 +1067,37 @@ export async function fetchTrackedJournals(request, reply) {
     throw error;
   }
 }
+
+/**
+ * Fetch Zones (Regions & Countries).
+ */
+export async function fetchZones(request, reply) {
+  try {
+    const data = await getZones();
+    reply.send({
+      code: 200,
+      message: 'Fetch zones successfully',
+      data,
+    });
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Fetch Subject Areas hierarchy with categories.
+ */
+export async function fetchSubjectAreas(request, reply) {
+  try {
+    const { project_id } = request.query || {};
+    const data = await getSubjectAreasHierarchy(project_id);
+    reply.send({
+      code: 200,
+      message: 'Fetch subject areas hierarchy successfully',
+      data,
+    });
+  } catch (error) {
+    throw error;
+  }
+}
+

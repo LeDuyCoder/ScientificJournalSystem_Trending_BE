@@ -15,6 +15,7 @@ import {
   getCollaborationNetworkSchema, getRankingsSchema, getProductivityMatrixSchema, getJournalMigrationSchema,
   getNetworkTopologySchema,
   getDevelopmentTrendsSchema,
+  getSubjectAreasSchema,
   getSubjectCategoriesSchema,
   getCollaborationInsightsSchema,
   getCrossLinksSchema,
@@ -52,7 +53,9 @@ import {
   fetchProjectKeywords,
   addProjectKeywordHandler,
   removeProjectKeywordHandler,
-  fetchTrackedJournals
+  fetchTrackedJournals,
+  fetchZones,
+  fetchSubjectAreas
 } from './analytics.controller.js';
 
 export default async function (fastify) {
@@ -1599,6 +1602,8 @@ fastify.get('/development-trends', { preHandler: [validateQuery(getDevelopmentTr
  *         description: Lỗi hệ thống
  */
 fastify.get('/subject-categories', { preHandler: [validateQuery(getSubjectCategoriesSchema)] }, fetchProjectSubjectCategories);
+fastify.get('/subject-areas', { preHandler: [validateQuery(getSubjectAreasSchema)] }, fetchSubjectAreas);
+fastify.get('/zones', fetchZones);
 
 /**
  * @swagger

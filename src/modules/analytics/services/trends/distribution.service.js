@@ -80,7 +80,7 @@ function calculateAndNormalizePercentage(groupCounts, limit = 3) {
  * @returns {Promise<Array<{name: string, percentage: number}>>}
  */
 export async function getDistribution(options) {
-  const { project_id, distribution_type = 'sector', subject_area, keywords, from_year, to_year } = options;
+  const { project_id, distribution_type = 'sector', subject_area, subject_category, keywords, from_year, to_year, zone } = options;
 
   // Xử lý impact_quartile (hiện tại Database chưa có cột này, trả về mock data theo chuẩn)
   if (distribution_type === 'impact_quartile') {
@@ -94,9 +94,10 @@ export async function getDistribution(options) {
 
   const keywordList = prepareKeywords(keywords);
   const normalizedKeywords = [...keywordList].map(s => s.toLowerCase()).sort().join(',');
+  const normalizedZone = zone && zone !== 'Global Distribution' && zone !== 'all' ? String(zone).trim() : '';
 
-  // ── 1. Tạo cache key động dựa trên bộ lọc (Đổi sang v6 để xoá cache cũ ngay lập tức) ──
-  const cacheKey = `analytics:distribution:v6:${project_id || 'all'}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}`;
+  // ── 1. Tạo cache key động dựa trên bộ lọc ──
+  const cacheKey = `analytics:distribution:v7:${project_id || 'all'}:zone:${normalizedZone.toLowerCase()}:${(subject_area || '').toLowerCase()}:${normalizedKeywords}:${from_year || ''}:${to_year || ''}`;
 
   try {
     const cachedData = await redisGet(cacheKey);
@@ -114,8 +115,9 @@ export async function getDistribution(options) {
     const hasProjectFilter = project_id && project_id !== 'undefined' && project_id !== 'null';
     const hasSubjectArea = !!subject_area;
     const hasKeywords = keywordList.length > 0;
+    const hasZone = !!normalizedZone;
 
-    if (!hasProjectFilter && !hasSubjectArea && !hasKeywords) {
+    if (!hasProjectFilter && !hasSubjectArea && !hasKeywords && !hasZone) {
       let fastParams = [];
       let fastWhere = [];
 
@@ -175,24 +177,48 @@ export async function getDistribution(options) {
       }
     }
 
-    // --- Client custom filter: subject_area (Lọc AND trong phạm vi project) ---
-    if (subject_area) {
-      const saRes = await client.query(
-        `SELECT subject_area_id FROM "Subject_Area" WHERE LOWER(display_name) = LOWER($1) AND COALESCE(is_deleted, false) = false`,
-        [subject_area.trim()]
-      );
+    // --- Client custom filter: subject_category or subject_area ---
+    const isCatActive = subject_category &&
+      String(subject_category).trim().toLowerCase() !== 'all' &&
+      String(subject_category).trim().toLowerCase() !== 'all categories';
+    const isAreaActive = subject_area &&
+      String(subject_area).trim().toLowerCase() !== 'all' &&
+      String(subject_area).trim().toLowerCase() !== 'all areas';
 
-      if (saRes.rows.length === 0) {
-        return [];
+    if (isCatActive || isAreaActive) {
+      let filterCategoryIds = [];
+      if (isCatActive) {
+        const scRes = await client.query(
+          `SELECT subject_category_id FROM "Subject_Category" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+             AND COALESCE(is_deleted, false) = false`,
+          [subject_category.trim()]
+        );
+        filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+      } else if (isAreaActive) {
+        const saRes = await client.query(
+          `SELECT subject_area_id FROM "Subject_Area" 
+           WHERE (LOWER(display_name) = LOWER($1) OR subject_area_id::text = $1)
+             AND COALESCE(is_deleted, false) = false`,
+          [subject_area.trim()]
+        );
+        if (saRes.rows.length > 0) {
+          const saId = saRes.rows[0].subject_area_id;
+          const scRes = await client.query(
+            `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
+            [saId]
+          );
+          filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+        } else {
+          const scRes = await client.query(
+            `SELECT subject_category_id FROM "Subject_Category" 
+             WHERE (LOWER(display_name) = LOWER($1) OR subject_category_id::text = $1)
+               AND COALESCE(is_deleted, false) = false`,
+            [subject_area.trim()]
+          );
+          filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
+        }
       }
-
-      const saId = saRes.rows[0].subject_area_id;
-
-      const scRes = await client.query(
-        `SELECT subject_category_id FROM "Subject_Category" WHERE subject_area_id = $1 AND COALESCE(is_deleted, false) = false`,
-        [saId]
-      );
-      const filterCategoryIds = scRes.rows.map(r => Number(r.subject_category_id));
 
       if (filterCategoryIds.length === 0) {
         return [];
@@ -250,6 +276,30 @@ export async function getDistribution(options) {
       sqlFilters.push(`a.publication_year <= $${params.length}`);
     }
 
+    // --- Client custom filter: zone ---
+    let zoneJoin = '';
+    let zoneCondition = '';
+    if (normalizedZone) {
+      const zRes = await client.query(
+        `SELECT zone_id FROM "Zone" 
+         WHERE LOWER(name) = LOWER($1) OR UPPER(code) = UPPER($1) OR zone_id::text = $1 
+         LIMIT 1`,
+        [normalizedZone]
+      );
+      if (zRes.rows.length > 0) {
+        const resolvedZoneId = zRes.rows[0].zone_id;
+        params.push(resolvedZoneId);
+        zoneJoin = `
+          JOIN "Issue" i ON a.issue_id = i.issue_id AND COALESCE(i.is_deleted, false) = false
+          JOIN "Volume" v ON i.volume_id = v.volume_id AND COALESCE(v.is_deleted, false) = false
+          JOIN "Journal" j ON v.journal_id = j.journal_id AND COALESCE(j.is_deleted, false) = false
+        `;
+        zoneCondition = `AND (j.region = $${params.length} OR j.country = $${params.length})`;
+      } else {
+        return [];
+      }
+    }
+
     const whereClause = sqlFilters.length > 0 ? `AND ${sqlFilters.join(' AND ')}` : '';
 
     const prefix = '';
@@ -261,9 +311,11 @@ export async function getDistribution(options) {
         COUNT(DISTINCT a.article_id)::integer AS total
       FROM ${fromTable}
       INNER JOIN "Topic" t ON a.primary_topic = t.topic_id
+      ${zoneJoin}
       WHERE COALESCE(a.is_deleted, false) = false
         AND t.display_name IS NOT NULL
         ${whereClause}
+        ${zoneCondition}
       GROUP BY t.display_name
     `;
 
