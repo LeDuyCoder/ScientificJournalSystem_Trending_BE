@@ -6,16 +6,19 @@ import { getResolvedScope } from '../../../analytics/services/analytics/scope.re
 const CACHE_KEY_PREFIX = 'analytics:journal-quartiles:v2';
 const CACHE_TTL = 300; // 5 minutes
 
-export async function getJournalQuartileDistribution(query) {
-  let { project_id, subject_area, keywords, from_year, to_year } = query;
-  
-  from_year = from_year || 2024;
-  to_year = to_year || 2026;
+export async function getJournalQuartileDistribution(query = {}) {
+  const project_id = query.project_id || query.projectId;
+  const subject_area = query.subject_area || query.subjectArea;
+  const subject_category = query.subject_category || query.subjectCategory;
+  const keywords = query.keywords;
+  let from_year = query.from_year || query.fromYear || 2024;
+  let to_year = query.to_year || query.toYear || 2026;
 
   const queryParams = {
     project_id,
+    subject_area,
     domain: subject_area,
-    subject_category: keywords
+    subject_category: subject_category || keywords
   };
 
   const scope = await getResolvedScope(queryParams);

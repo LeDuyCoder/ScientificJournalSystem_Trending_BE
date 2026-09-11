@@ -201,7 +201,7 @@ export async function getProjectSubjectCategories(filters) {
 
   // --- Caching Logic ---
   const cacheKeyParts = [
-    'analytics:subject-categories',
+    'analytics:subject-categories:v2',
     `project:${projectId}`,
     `page:${page}`,
     `limit:${limit}`,
@@ -240,23 +240,29 @@ export async function getProjectSubjectCategories(filters) {
 
     const { subject_area: subjectAreaId, subject_area_name: subjectAreaName } = projectRes.rows[0];
 
-    // 2. Build dynamic WHERE clause
+    // 2. Build dynamic WHERE clause - only return categories with actual data
     const params = [subjectAreaId];
     const whereClauses = [
-      `subject_area_id = $1`,
-      `COALESCE(is_deleted, false) = false`,
+      `sc.subject_area_id = $1`,
+      `COALESCE(sc.is_deleted, false) = false`,
+      `EXISTS (
+        SELECT 1 FROM "Topic" t
+        JOIN "analytics_topic_year" aty ON t.topic_id = aty.topic_id
+        WHERE t.subject_category_id = sc.subject_category_id
+          AND aty.article_count > 0
+      )`
     ];
 
     if (search) {
       params.push(`%${search.toLowerCase()}%`);
-      whereClauses.push(`LOWER(display_name) LIKE $${params.length}`);
+      whereClauses.push(`LOWER(sc.display_name) LIKE $${params.length}`);
     }
 
     const whereSQL = whereClauses.join(' AND ');
 
     // 3. Count total
     const countRes = await client.query(
-      `SELECT COUNT(*) AS total FROM "Subject_Category" WHERE ${whereSQL}`,
+      `SELECT COUNT(*) AS total FROM "Subject_Category" sc WHERE ${whereSQL}`,
       params
     );
     const total = parseInt(countRes.rows[0].total, 10);
@@ -265,10 +271,10 @@ export async function getProjectSubjectCategories(filters) {
     params.push(limit);
     params.push(offset);
     const itemsRes = await client.query(
-      `SELECT subject_category_id, display_name, description
-       FROM "Subject_Category"
+      `SELECT sc.subject_category_id, sc.display_name, sc.description
+       FROM "Subject_Category" sc
        WHERE ${whereSQL}
-       ORDER BY display_name ASC
+       ORDER BY sc.display_name ASC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -304,3 +310,149 @@ export async function getProjectSubjectCategories(filters) {
     client.release();
   }
 }
+
+/**
+ * Lấy danh sách các Zone (Region và Country) có liên kết với Journal
+ */
+export async function getZones() {
+  const cacheKey = 'analytics:zones:v1';
+  try {
+    const cached = await redisGet(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (err) {
+    logger.warn('Redis error getting zones:', err?.message);
+  }
+
+  const client = await pool.connect();
+  try {
+    const regionsRes = await client.query(`
+      SELECT z.zone_id, z.code, z.name, z.type, COUNT(j.journal_id) as journal_count
+      FROM "Zone" z
+      JOIN "Journal" j ON z.zone_id = j.region
+      WHERE z.type = 'REGION'
+      GROUP BY z.zone_id, z.code, z.name, z.type
+      ORDER BY z.name ASC
+    `);
+
+    const countriesRes = await client.query(`
+      SELECT z.zone_id, z.code, z.name, z.type, COUNT(j.journal_id) as journal_count
+      FROM "Zone" z
+      JOIN "Journal" j ON z.zone_id = j.country
+      WHERE z.type = 'COUNTRY'
+      GROUP BY z.zone_id, z.code, z.name, z.type
+      ORDER BY z.name ASC
+    `);
+
+    const result = {
+      regions: regionsRes.rows.map(r => ({
+        zone_id: Number(r.zone_id),
+        code: r.code,
+        name: r.name,
+        type: 'REGION',
+        journal_count: Number(r.journal_count)
+      })),
+      countries: countriesRes.rows.map(r => ({
+        zone_id: Number(r.zone_id),
+        code: r.code,
+        name: r.name,
+        type: 'COUNTRY',
+        journal_count: Number(r.journal_count)
+      }))
+    };
+
+    try {
+      await redisSet(cacheKey, JSON.stringify(result), 86400);
+    } catch {}
+
+    return result;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Lấy danh sách phân cấp Subject Areas và Subject Categories trực thuộc có dữ liệu bài báo.
+ * @param {string|number} [projectId] - Tuỳ chọn ID của Project để trả về default projectArea.
+ * @returns {Promise<{ projectArea: object|null, items: Array<{ id: number, name: string, categories: Array<{ id: number, name: string }> }> }>}
+ */
+export async function getSubjectAreasHierarchy(projectId) {
+  const cleanProjectId = projectId && projectId !== 'default-id' && !isNaN(Number(projectId))
+    ? Number(projectId)
+    : null;
+
+  const cacheKey = `analytics:subject-areas:hierarchy:v1:${cleanProjectId || 'all'}`;
+  try {
+    const cached = await redisGet(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (err) {
+    logger.warn('Redis error getting subject areas hierarchy:', err?.message);
+  }
+
+  const client = await pool.connect();
+  try {
+    let projectArea = null;
+    if (cleanProjectId) {
+      const pRes = await client.query(
+        `SELECT sa.subject_area_id, sa.display_name
+         FROM "Project" p
+         JOIN "Subject_Area" sa ON p.subject_area = sa.subject_area_id
+         WHERE p.project_id = $1 AND COALESCE(sa.is_deleted, false) = false`,
+        [cleanProjectId]
+      );
+      if (pRes.rows.length > 0) {
+        projectArea = {
+          id: Number(pRes.rows[0].subject_area_id),
+          name: pRes.rows[0].display_name
+        };
+      }
+    }
+
+    const rowsRes = await client.query(`
+      SELECT 
+        sa.subject_area_id,
+        sa.display_name AS area_name,
+        sc.subject_category_id,
+        sc.display_name AS category_name
+      FROM "Subject_Area" sa
+      JOIN "Subject_Category" sc ON sa.subject_area_id = sc.subject_area_id
+      WHERE COALESCE(sa.is_deleted, false) = false
+        AND COALESCE(sc.is_deleted, false) = false
+        AND EXISTS (
+          SELECT 1 FROM "Topic" t
+          JOIN "analytics_topic_year" aty ON t.topic_id = aty.topic_id
+          WHERE t.subject_category_id = sc.subject_category_id
+            AND aty.article_count > 0
+        )
+      ORDER BY sa.display_name ASC, sc.display_name ASC
+    `);
+
+    const areaMap = new Map();
+    for (const row of rowsRes.rows) {
+      const areaId = Number(row.subject_area_id);
+      if (!areaMap.has(areaId)) {
+        areaMap.set(areaId, {
+          id: areaId,
+          name: row.area_name,
+          categories: []
+        });
+      }
+      areaMap.get(areaId).categories.push({
+        id: Number(row.subject_category_id),
+        name: row.category_name
+      });
+    }
+
+    const result = {
+      projectArea,
+      items: Array.from(areaMap.values())
+    };
+
+    try {
+      await redisSet(cacheKey, JSON.stringify(result), 3600);
+    } catch {}
+
+    return result;
+  } finally {
+    client.release();
+  }
+}
